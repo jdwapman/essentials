@@ -12,3 +12,4 @@ add_subdirectory(kcore)
 
 # begin /* Add experimenatl examples' subdirectories */
 add_subdirectory(experimental/async)
+add_subdirectory(experimental/spmv)
