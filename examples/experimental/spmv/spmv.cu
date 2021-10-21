@@ -37,9 +37,6 @@ void test_spmv(int num_arguments, char** argument_array) {
     exit(1);
   }
 
-  thrust::device_vector<nonzero_t> x(csr.number_of_rows);
-  thrust::device_vector<nonzero_t> y(csr.number_of_rows);
-
   // --
   // Build graph + metadata
 
@@ -54,11 +51,39 @@ void test_spmv(int num_arguments, char** argument_array) {
           csr.nonzero_values.data().get()   // values
       );
 
-  double elapsed_cusparse = 0;
+  thrust::host_vector<nonzero_t> x_host(csr.number_of_columns);
 
-  printf("%s,%d,%d,%d,%f\n", filename.c_str(), csr.number_of_rows,
+  srand(0);
+  for (size_t idx = 0; idx < x_host.size(); idx++) x_host[idx] = rand() % 64;
+
+  thrust::device_vector<nonzero_t> x_device = x_host;
+  thrust::device_vector<nonzero_t> y_device(csr.number_of_rows);
+
+  thrust::host_vector<nonzero_t> y_ref_host(csr.number_of_rows);
+
+  // --
+  // Run the algorithm
+
+  bool verify = false;
+  if(verify) {
+    cpu_spmv(csr, x_host, y_ref_host);
+  }
+
+  double elapsed_cusparse = 0;
+  // double elapsed_cusparse = run_cusparse(sparse_matrix, x_device, y_device);
+
+  double elapsed_tiled = 0;
+  // double elapsed_tiled = run_tiled(sparse_matrix, x_device, y_device);
+
+  int num_errors_cusparse = 0;
+  if(verify) {
+    thrust::host_vector<nonzero_t> y_host = y_device;
+    num_errors_cusparse = check_spmv(y_ref_host, y_host);
+  }
+
+  printf("%s,%d,%d,%d,%f, %f\n", filename.c_str(), csr.number_of_rows,
          csr.number_of_columns, csr.number_of_nonzeros,
-         elapsed_cusparse);
+         elapsed_cusparse, elapsed_tiled);
 }
 
 int main(int argc, char** argv) {
