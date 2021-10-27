@@ -88,7 +88,7 @@ void test_spmv(int num_arguments, char** argument_array) {
     num_errors_cusparse = check_spmv(y_ref_host, y_host);
   }
 
-  printf("%s,%d,%d,%d,%f, %f\n", filename.c_str(), csr.number_of_rows,
+  printf("%s,%d,%d,%d,%f,%f\n", filename.c_str(), csr.number_of_rows,
          csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
          elapsed_tiled);
 

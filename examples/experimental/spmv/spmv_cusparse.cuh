@@ -4,6 +4,7 @@
 #include <cuda_runtime_api.h>  // cudaMalloc, cudaMemcpy, etc.
 #include <thrust/device_vector.h>
 #include "spmv_utils.cuh"
+#include <gunrock/util/timer.hxx>
 
 #define CHECK_CUSPARSE(func)                                                   \
   {                                                                            \
@@ -51,13 +52,14 @@ double spmv_cusparse(csr_t& A, vector_t& input, vector_t& output) {
   CHECK_CUDA(cudaMalloc(&dBuffer, bufferSize))
 
   // execute SpMV
-  // TODO Add a timer here
+  gunrock::util::timer_t timer;
+  timer.begin();
   CHECK_CUSPARSE(cusparseSpMV(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
                               matA, vecX, &beta, vecY, CUDA_R_32F,
                               CUSPARSE_MV_ALG_DEFAULT, dBuffer))
 
   CHECK_CUDA(cudaDeviceSynchronize());
-  // TODO stop the timer here
+  timer.end();
 
   // destroy matrix/vector descriptors
   CHECK_CUSPARSE(cusparseDestroySpMat(matA))
@@ -68,5 +70,5 @@ double spmv_cusparse(csr_t& A, vector_t& input, vector_t& output) {
   // device memory deallocation
   CHECK_CUDA(cudaFree(dBuffer))
 
-  return 0; // TODO return the timer here
+  return timer.milliseconds();  // TODO return the timer here
 }
