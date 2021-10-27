@@ -35,8 +35,9 @@ static bool equal(T f1, T f2)
 }
 
 template <typename vector_t>
-bool check_spmv(vector_t &a, vector_t &b)
+int check_spmv(vector_t &a, vector_t &b)
 {
+    int num_errors = 0;
     for (size_t i = 0; i < a.size(); i++)
     {
         if (!equal(a[i], b[i]))
@@ -46,9 +47,9 @@ bool check_spmv(vector_t &a, vector_t &b)
             std::cout << "Error = " << std::fabs(a[i] - b[i]) << std::endl;
             double error_percent = std::fabs(a[i] - b[i]) / std::fmax(std::fabs(a[i]), std::fabs(b[i]));
             std::cout << "Error % = " << error_percent << std::endl;
-            return false;
+            num_errors++;
         }
     }
 
-    return true;
+    return num_errors;
 }

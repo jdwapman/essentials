@@ -1,5 +1,6 @@
 #include <gunrock/algorithms/experimental/async/bfs.hxx>
 #include "spmv_cpu.hxx"
+#include "spmv_cusparse.cuh"
 
 using namespace gunrock;
 using namespace experimental;
@@ -18,12 +19,11 @@ void test_spmv(int num_arguments, char** argument_array) {
   using edge_t = int;
   using nonzero_t = float;
 
-  using csr_t = 
-      format::csr_t<memory_space_t::device, row_t, edge_t, nonzero_t>;
+  using csr_t = format::csr_t<memory_space_t::device, row_t, edge_t, nonzero_t>;
 
   // --
   // IO
-  printf("Hello World!\n");
+
   csr_t csr;
   std::string filename = argument_array[1];
 
@@ -40,21 +40,21 @@ void test_spmv(int num_arguments, char** argument_array) {
   // --
   // Build graph + metadata
 
-  auto sparse_matrix =
-      graph::build::from_csr<memory_space_t::device,
-                             graph::view_t::csr>(
-          csr.number_of_rows,               // rows
-          csr.number_of_columns,            // columns
-          csr.number_of_nonzeros,           // nonzeros
-          csr.row_offsets.data().get(),     // row_offsets
-          csr.column_indices.data().get(),  // column_indices
-          csr.nonzero_values.data().get()   // values
-      );
+  // auto sparse_matrix = graph::build::from_csr<memory_space_t::device,
+  //                                             graph::view_t::csr>(
+  //     csr.number_of_rows,               // rows
+  //     csr.number_of_columns,            // columns
+  //     csr.number_of_nonzeros,           // nonzeros
+  //     csr.row_offsets.data().get(),     // row_offsets
+  //     csr.column_indices.data().get(),  // column_indices
+  //     csr.nonzero_values.data().get()   // values
+  // );
 
   thrust::host_vector<nonzero_t> x_host(csr.number_of_columns);
 
   srand(0);
-  for (size_t idx = 0; idx < x_host.size(); idx++) x_host[idx] = rand() % 64;
+  for (size_t idx = 0; idx < x_host.size(); idx++)
+    x_host[idx] = rand() % 64;
 
   thrust::device_vector<nonzero_t> x_device = x_host;
   thrust::device_vector<nonzero_t> y_device(csr.number_of_rows);
@@ -64,26 +64,36 @@ void test_spmv(int num_arguments, char** argument_array) {
   // --
   // Run the algorithm
 
-  bool verify = false;
-  if(verify) {
-    cpu_spmv(csr, x_host, y_ref_host);
-  }
+  bool verify = true;
 
-  double elapsed_cusparse = 0;
-  // double elapsed_cusparse = run_cusparse(sparse_matrix, x_device, y_device);
+  double elapsed_cusparse = spmv_cusparse(csr, x_device, y_device);
 
   double elapsed_tiled = 0;
   // double elapsed_tiled = run_tiled(sparse_matrix, x_device, y_device);
 
   int num_errors_cusparse = 0;
-  if(verify) {
+  if (verify) {
+    // Get the output from the device
     thrust::host_vector<nonzero_t> y_host = y_device;
+
+    // Compute the reference solution
+    cpu_spmv(csr, x_host, y_ref_host);
+
+    // Print the cuSparse computed vector
+    display(y_host, "y_cusparse");
+
+    // Print the reference computed vector
+    display(y_ref_host, "y_ref_host");
+
     num_errors_cusparse = check_spmv(y_ref_host, y_host);
   }
 
   printf("%s,%d,%d,%d,%f, %f\n", filename.c_str(), csr.number_of_rows,
-         csr.number_of_columns, csr.number_of_nonzeros,
-         elapsed_cusparse, elapsed_tiled);
+         csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
+         elapsed_tiled);
+
+  // Print the number of errors
+  printf("Errors: %d\n", num_errors_cusparse);
 }
 
 int main(int argc, char** argv) {
