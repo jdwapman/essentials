@@ -131,11 +131,11 @@ set(CUDA_FLAGS
   --use_fast_math
   --ptxas-options -v
   # --verbose
-  # --optimize 3 # Host optimize-level
-  --debug # Host debug
-  --device-debug # Device debug
   --generate-line-info
 )
+
+set(CMAKE_CUDA_FLAGS_DEBUG "--optimize 0 --debug --device-debug")
+set(CMAKE_CUDA_FLAGS_RELEASE "--optimize 3")
 
 ####################################################
 ############ TARGET COMPILE OPTIONS ################
