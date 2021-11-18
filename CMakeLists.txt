@@ -12,7 +12,7 @@ add_definitions("-DESSENTIALSVERSION=${ESSENTIALS_VERSION}")
 
 project(essentials
     VERSION ${ESSENTIALS_VERSION}
-    LANGUAGES CXX CUDA
+    LANGUAGES C CXX CUDA
 )
 
 # begin /* Dependencies directory */
@@ -23,6 +23,7 @@ set(PROJECT_DEPS_DIR externals)
 # include(${PROJECT_SOURCE_DIR}/cmake/FetchRapidJSON.cmake)
 include(${PROJECT_SOURCE_DIR}/cmake/FetchThrustCUB.cmake)
 include(${PROJECT_SOURCE_DIR}/cmake/FetchModernGPU.cmake)
+include(${PROJECT_SOURCE_DIR}/cmake/FetchGoogleTest.cmake)
 # end /* Include cmake modules */
 
 ## Set the directory where the binaries will be stored
@@ -162,9 +163,10 @@ endif(ESSENTIALS_BUILD_EXAMPLES)
 ####################################################
 option(ESSENTIALS_BUILD_TESTS
   "If on, builds the unit tests."
-  OFF)
+  ON)
 
 # Subdirectories for examples, testing and documentation
 if(ESSENTIALS_BUILD_TESTS)
+  enable_testing()
   add_subdirectory(unittests)
 endif(ESSENTIALS_BUILD_TESTS)
