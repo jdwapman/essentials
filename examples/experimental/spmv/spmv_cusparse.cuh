@@ -49,7 +49,7 @@ double spmv_cusparse(csr_t& A, vector_t& input, vector_t& output) {
   CHECK_CUSPARSE(cusparseSpMV_bufferSize(
       handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY,
       CUDA_R_32F, CUSPARSE_MV_ALG_DEFAULT, &bufferSize))
-  CHECK_CUDA(cudaMalloc(&dBuffer, bufferSize))
+CHECK_CUDA(cudaMalloc(&dBuffer, bufferSize))
 
   // execute SpMV
   gunrock::util::timer_t timer;
