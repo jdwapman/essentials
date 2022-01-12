@@ -12,13 +12,10 @@
 #pragma once
 
 #include <gunrock/util/math.hxx>
-#include <gunrock/cuda/context.hxx>
+#include <gunrock/cuda/cuda.hxx>
 
 #include <gunrock/framework/operators/configs.hxx>
 #include <gunrock/framework/operators/for/for.hxx>
-
-#include <thrust/transform_scan.h>
-#include <thrust/iterator/discard_iterator.h>
 
 namespace gunrock {
 namespace operators {
@@ -34,49 +31,41 @@ template <advance_direction_t direction,
           typename work_tiles_t>
 void execute(graph_t& G,
              operator_t op,
-             frontier_t* input,
-             frontier_t* output,
+             frontier_t& input,
+             frontier_t& output,
              work_tiles_t& segments,
              cuda::standard_context_t& context) {
   using type_t = typename frontier_t::type_t;
 
-  if constexpr (output_type != advance_io_type_t::none) {
-    auto size_of_output = compute_output_length(G, input, segments, context);
+  if (output_type != advance_io_type_t::none) {
+    auto size_of_output = compute_output_length(G, &input, segments, context);
 
     // If output frontier is empty, resize and return.
     if (size_of_output <= 0) {
-      output->set_number_of_elements(0);
+      output.set_number_of_elements(0);
       return;
     }
 
     /// Resize the output (inactive) buffer to the new size.
     /// @todo Can be hidden within the frontier struct.
-    if (output->get_capacity() < size_of_output)
-      output->reserve(size_of_output);
-    output->set_number_of_elements(size_of_output);
+    if (output.get_capacity() < size_of_output)
+      output.reserve(size_of_output);
+    output.set_number_of_elements(size_of_output);
   }
 
   // Get output data of the active buffer.
-  auto segments_data = segments.data().get();
-  auto input_data = input->data();
-  auto output_data = output->data();
+  auto segments_ptr = segments.data().get();
 
-  auto pre_condition = [=] __device__(std::size_t const& idx) {
-    auto v = (input_type == advance_io_type_t::graph) ? type_t(idx)
-                                                      : input_data[idx];
-    return gunrock::util::limits::is_valid(v);
-  };
+  auto thread_mapped = [=] __device__(int const& tid, int const& bid) {
+    auto v = (input_type == advance_io_type_t::graph)
+                 ? type_t(tid)
+                 : input.get_element_at(tid);
 
-  auto neighbors_expand = [=] __device__(std::size_t const& idx) {
-    auto v = (input_type == advance_io_type_t::graph) ? type_t(idx)
-                                                      : input_data[idx];
+    if (!gunrock::util::limits::is_valid(v))
+      return;
+
     auto starting_edge = G.get_starting_edge(v);
     auto total_edges = G.get_number_of_neighbors(v);
-
-    type_t offset = type_t(0);
-    /// @todo if constexpr ()
-    if (output_type != advance_io_type_t::none)
-      offset = segments_data[idx];
 
     for (auto i = 0; i < total_edges; ++i) {
       auto e = i + starting_edge;            // edge id
@@ -84,29 +73,27 @@ void execute(graph_t& G,
       auto w = G.get_edge_weight(e);         // weight
       bool cond = op(v, n, e, w);
 
-      /// @todo if constexpr ()
-      if (output_type != advance_io_type_t::none)
-        output_data[offset + i] =
+      if (output_type != advance_io_type_t::none) {
+        std::size_t out_idx = segments_ptr[tid] + i;
+        type_t element =
             (cond && n != v) ? n : gunrock::numeric_limits<type_t>::invalid();
+        output.set_element_at(element, out_idx);
+      }
     }
-
-    return gunrock::numeric_limits<type_t>::invalid();
   };
 
-  std::size_t end = (input_type == advance_io_type_t::graph)
-                        ? G.get_number_of_vertices()
-                        : input->get_number_of_elements();
-  thrust::transform_if(
-      thrust::cuda::par.on(context.stream()),          // execution policy
-      thrust::make_counting_iterator<std::size_t>(0),  // input iterator: first
-      thrust::make_counting_iterator<std::size_t>(end),  // input iterator: last
-      thrust::make_discard_iterator(),  // output iterator: ignore
-      neighbors_expand,                 // unary operation
-      pre_condition                     // predicate operation
-  );
+  std::size_t num_elements = (input_type == advance_io_type_t::graph)
+                                 ? G.get_number_of_vertices()
+                                 : input.get_number_of_elements();
 
-  // std::cout << "[thread-mapped] Output Size = " << size_of_output <<
-  // std::endl;
+  // Set-up and launch thread-mapped advance.
+  using namespace cuda::launch_box;
+  using launch_t =
+      launch_box_t<launch_params_dynamic_grid_t<fallback, dim3_t<256>, 3>>;
+
+  launch_t l;
+  l.launch_blocked(context, thread_mapped, num_elements);
+  context.synchronize();
 }
 }  // namespace thread_mapped
 }  // namespace advance

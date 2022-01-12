@@ -1,7 +1,7 @@
 include(FetchContent)
 set(FETCHCONTENT_QUIET ON)
 
-message("-- Cloning External Project: Thrust")
+message(STATUS "Cloning External Project: Thrust")
 get_filename_component(FC_BASE "../externals"
                 REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
 set(FETCHCONTENT_BASE_DIR ${FC_BASE})
@@ -9,7 +9,7 @@ set(FETCHCONTENT_BASE_DIR ${FC_BASE})
 FetchContent_Declare(
     thrust
     GIT_REPOSITORY https://github.com/thrust/thrust.git
-    GIT_TAG        1.14.0
+    GIT_TAG        1.15.0
 )
 
 FetchContent_GetProperties(thrust)
@@ -19,4 +19,5 @@ if(NOT thrust_POPULATED)
   )
 endif()
 set(THRUST_INCLUDE_DIR "${thrust_SOURCE_DIR}")
-set(CUB_INCLUDE_DIR "${thrust_SOURCE_DIR}/cub")
+# Windows doesn't support symblink, so make sure we link to the real library.
+set(CUB_INCLUDE_DIR "${thrust_SOURCE_DIR}/dependencies/cub")

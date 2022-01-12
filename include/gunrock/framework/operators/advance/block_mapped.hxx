@@ -1,5 +1,5 @@
 /**
- * @file thread_mapped.hxx
+ * @file block_mapped.hxx
  * @author Muhammad Osama (mosama@ucdavis.edu)
  * @brief
  * @version 0.1
@@ -12,9 +12,7 @@
 #pragma once
 
 #include <gunrock/util/math.hxx>
-#include <gunrock/cuda/context.hxx>
-#include <gunrock/cuda/launch_box.hxx>
-#include <gunrock/cuda/global.hxx>
+#include <gunrock/cuda/cuda.hxx>
 
 #include <gunrock/framework/operators/configs.hxx>
 
@@ -29,8 +27,8 @@ namespace operators {
 namespace advance {
 namespace block_mapped {
 
-template <int THREADS_PER_BLOCK,
-          int ITEMS_PER_THREAD,
+template <unsigned int THREADS_PER_BLOCK,
+          unsigned int ITEMS_PER_THREAD,
           advance_io_type_t input_type,
           advance_io_type_t output_type,
           typename graph_t,
@@ -89,7 +87,7 @@ void __global__ block_mapped_kernel(graph_t const G,
   __syncthreads();
 
   // Exclusive sum of degrees.
-  vertex_t aggregate_degree_per_block;
+  edge_t aggregate_degree_per_block;
   block_scan_t(storage.scan)
       .ExclusiveSum(th_deg, th_deg, aggregate_degree_per_block);
   __syncthreads();
@@ -115,7 +113,7 @@ void __global__ block_mapped_kernel(graph_t const G,
 
   length -= global_idx - local_idx;
 
-  for (int i = local_idx;               // threadIdx.x
+  for (edge_t i = local_idx;            // threadIdx.x
        i < aggregate_degree_per_block;  // total degree to process
        i += cuda::block::size::x()      // increment by blockDim.x
   ) {
@@ -177,19 +175,30 @@ void execute(graph_t& G,
     output->set_number_of_elements(size_of_output);
   }
 
-  std::size_t work_size = (input_type == advance_io_type_t::graph)
-                              ? G.get_number_of_vertices()
-                              : input->get_number_of_elements();
+  std::size_t num_elements = (input_type == advance_io_type_t::graph)
+                                 ? G.get_number_of_vertices()
+                                 : input->get_number_of_elements();
 
-  // TODO: Use launch_box_t instead.
-  constexpr int block_size = 128;
-  int grid_size = (work_size + block_size - 1) / block_size;
+  // Set-up and launch block-mapped advance.
+  using namespace cuda::launch_box;
+  using launch_t =
+      launch_box_t<launch_params_dynamic_grid_t<fallback, dim3_t<128>>>;
 
-  // Launch blocked-mapped advance kernel.
-  block_mapped_kernel<block_size, 1, input_type, output_type>
-      <<<grid_size, block_size, 0, context.stream()>>>(
-          G, op, input->data(), output->data(), work_size,
-          segments.data().get());
+  launch_t launch_box;
+
+  launch_box.calculate_grid_dimensions_strided(num_elements);
+  auto __bm = block_mapped_kernel<        // kernel
+      launch_box.block_dimensions.x,      // threas per block
+      1,                                  // items per thread
+      input_type, output_type,            // i/o parameters
+      graph_t,                            // graph type
+      typename frontier_t::type_t,        // frontier value type
+      typename work_tiles_t::value_type,  // segments value type
+      operator_t                          // lambda type
+      >;
+  auto __args = std::make_tuple(G, op, input->data(), output->data(),
+                                num_elements, segments.data().get());
+  launch_box.launch(__bm, __args, context);
   context.synchronize();
 }
 

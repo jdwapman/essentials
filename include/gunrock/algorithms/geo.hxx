@@ -210,7 +210,11 @@ __device__ __host__ void spatial_median(graph_t& G,
       R.latitude = (T.latitude - y.latitude) * Dinvs;
       R.longitude = (T.longitude - y.longitude) * Dinvs;
       r = sqrt(R.latitude * R.latitude + R.longitude * R.longitude);
-      rinv = r == 0 ?: num_zeros / r;
+
+      // Was rinv = (r == 0) ?: (num_zeros / r);
+      // https://gcc.gnu.org/onlinedocs/gcc/Conditionals.html
+      // ... I hate myself too.
+      rinv = (r == 0) ? 0 : (num_zeros / r);
 
       y1.latitude = max(0.0f, 1 - rinv) * T.latitude +
                     min(1.0f, rinv) * y.latitude;  // latitude
@@ -280,25 +284,20 @@ struct problem_t : gunrock::problem_t<graph_t> {
 
 template <typename problem_t>
 struct enactor_t : gunrock::enactor_t<problem_t> {
-  using gunrock::enactor_t<problem_t>::enactor_t;
+  enactor_t(problem_t* _problem,
+            std::shared_ptr<cuda::multi_context_t> _context,
+            enactor_properties_t _properties)
+      : gunrock::enactor_t<problem_t>(_problem, _context, _properties) {}
 
   using vertex_t = typename problem_t::vertex_t;
   using edge_t = typename problem_t::edge_t;
   using weight_t = typename problem_t::weight_t;
-
-  // <user-defined>
-  void prepare_frontier(frontier_t<vertex_t>* f,
-                        cuda::multi_context_t& context) override {
-    // Geolocation does not need a frontier as its frontier is the entire graph.
-  }
 
   void loop(cuda::multi_context_t& context) override {
     // Data slice
     auto E = this->get_enactor();
     auto P = this->get_problem();
     auto G = P->get_graph();
-    auto f = this->get_input_frontier();
-    auto f_data = f->data();
 
     auto coordinates = P->result.coordinates;
     auto spatial_iterations = P->param.spatial_iterations;
@@ -402,9 +401,12 @@ struct enactor_t : gunrock::enactor_t<problem_t> {
 
 template <typename graph_t>
 float run(graph_t& G,
-          coordinates_t* coordinates,              // Input/Output
-          unsigned int& total_iterations,          // Parameter
-          unsigned int& spatial_iterations = 1000  // Parameter
+          coordinates_t* coordinates,                    // Input/Output
+          const unsigned int total_iterations,           // Parameter
+          const unsigned int spatial_iterations = 1000,  // Parameter
+          std::shared_ptr<cuda::multi_context_t> context =
+              std::shared_ptr<cuda::multi_context_t>(
+                  new cuda::multi_context_t(0))  // Context
 ) {
   // <user-defined>
   using param_type = param_t;
@@ -415,22 +417,10 @@ float run(graph_t& G,
   // </user-defined>
 
   // <boiler-plate>
-  int num_gpu = 0;
-  cudaGetDeviceCount(&num_gpu);
-
-  thrust::host_vector<int> devices;
-  for (int device = 0; device < num_gpu; device++)
-    devices.push_back(device);
-
-  auto multi_context = std::shared_ptr<cuda::multi_context_t>(
-      new cuda::multi_context_t(devices));
-
-  multi_context->enable_peer_access();
-
   using problem_type = problem_t<graph_t, param_type, result_type>;
   using enactor_type = enactor_t<problem_type>;
 
-  problem_type problem(G, param, result, multi_context);
+  problem_type problem(G, param, result, context);
   problem.init();
   problem.reset();
 
@@ -438,7 +428,7 @@ float run(graph_t& G,
   enactor_properties_t props;
   props.self_manage_frontiers = true;
 
-  enactor_type enactor(&problem, multi_context, props);
+  enactor_type enactor(&problem, context, props);
   return enactor.enact();
   // </boiler-plate>
 }
