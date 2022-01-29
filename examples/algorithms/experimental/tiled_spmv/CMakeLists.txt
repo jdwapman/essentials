@@ -1,5 +1,5 @@
 # begin /* Set the application name. */
-set(APPLICATION_NAME spmv)
+set(APPLICATION_NAME tiled_spmv)
 # end /* Set the application name. */
 
 # begin /* Add CUDA executables */

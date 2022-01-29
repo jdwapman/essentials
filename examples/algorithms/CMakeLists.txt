@@ -14,4 +14,5 @@ add_subdirectory(spgemm)
 
 # begin /* Add experimental algorithms' subdirectories */
 add_subdirectory(experimental/async)
+add_subdirectory(experimental/tiled_spmv)
 # end /* Add experimental algorithms' subdirectories */
