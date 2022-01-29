@@ -25,7 +25,7 @@ template <typename vertex_t, typename weight_t>
 struct result_t {
   weight_t* distances;
   vertex_t* predecessors;
-  result_t(weight_t* _distances, vertex_t* _predecessors)
+  result_t(weight_t* _distances, vertex_t* _predecessors, vertex_t n_vertices)
       : distances(_distances), predecessors(_predecessors) {}
 };
 
@@ -66,7 +66,7 @@ struct problem_t : gunrock::problem_t<graph_t> {
     auto policy = context->execution_policy();
 
     auto single_source = this->param.single_source;
-    auto d_distances   = thrust::device_pointer_cast(this->result.distances);
+    auto d_distances = thrust::device_pointer_cast(this->result.distances);
     thrust::fill(policy, d_distances + 0, d_distances + n_vertices,
                  std::numeric_limits<weight_t>::max());
 
@@ -80,15 +80,16 @@ struct problem_t : gunrock::problem_t<graph_t> {
 
 template <typename problem_t>
 struct enactor_t : gunrock::enactor_t<problem_t> {
-  // Use Base class constructor -- does this work? does it handle copy
-  // constructor?
-  using gunrock::enactor_t<problem_t>::enactor_t;
+  enactor_t(problem_t* _problem,
+            std::shared_ptr<cuda::multi_context_t> _context)
+      : gunrock::enactor_t<problem_t>(_problem, _context) {}
 
   using vertex_t = typename problem_t::vertex_t;
   using edge_t = typename problem_t::edge_t;
   using weight_t = typename problem_t::weight_t;
+  using frontier_t = typename enactor_t<problem_t>::frontier_t;
 
-  void prepare_frontier(frontier_t<vertex_t>* f,
+  void prepare_frontier(frontier_t* f,
                         cuda::multi_context_t& context) override {
     auto P = this->get_problem();
     f->push_back(P->param.single_source);
@@ -135,17 +136,18 @@ struct enactor_t : gunrock::enactor_t<problem_t> {
     };
 
     // Execute advance operator on the provided lambda
-    operators::advance::execute<operators::load_balance_t::block_mapped>(
+    operators::advance::execute<operators::load_balance_t::thread_mapped>(
         G, E, shortest_path, context);
 
     // Execute filter operator on the provided lambda
-    operators::filter::execute<operators::filter_algorithm_t::predicated>(
+    operators::filter::execute<operators::filter_algorithm_t::bypass>(
         G, E, remove_completed_paths, context);
 
-    // Execute uniquify operator to deduplicate the frontier
-    bool best_effort_uniquification = true;
-    operators::uniquify::execute<operators::uniquify_algorithm_t::unique>(
-        E, context, best_effort_uniquification);
+    /// @brief Execute uniquify operator to deduplicate the frontier
+    /// @note Not required.
+    // // bool best_effort_uniquification = true;
+    // // operators::uniquify::execute<operators::uniquify_algorithm_t::unique>(
+    // // E, context, best_effort_uniquification);
   }
 
 };  // struct enactor_t
@@ -154,7 +156,10 @@ template <typename graph_t>
 float run(graph_t& G,
           typename graph_t::vertex_type& single_source,  // Parameter
           typename graph_t::weight_type* distances,      // Output
-          typename graph_t::vertex_type* predecessors    // Output
+          typename graph_t::vertex_type* predecessors,   // Output
+          std::shared_ptr<cuda::multi_context_t> context =
+              std::shared_ptr<cuda::multi_context_t>(
+                  new cuda::multi_context_t(0))  // Context
 ) {
   // <user-defined>
   using vertex_t = typename graph_t::vertex_type;
@@ -164,21 +169,17 @@ float run(graph_t& G,
   using result_type = result_t<vertex_t, weight_t>;
 
   param_type param(single_source);
-  result_type result(distances, predecessors);
+  result_type result(distances, predecessors, G.get_number_of_vertices());
   // </user-defined>
-
-  // <boiler-plate>
-  auto multi_context =
-      std::shared_ptr<cuda::multi_context_t>(new cuda::multi_context_t(0));
 
   using problem_type = problem_t<graph_t, param_type, result_type>;
   using enactor_type = enactor_t<problem_type>;
 
-  problem_type problem(G, param, result, multi_context);
+  problem_type problem(G, param, result, context);
   problem.init();
   problem.reset();
 
-  enactor_type enactor(&problem, multi_context);
+  enactor_type enactor(&problem, context);
   return enactor.enact();
   // </boiler-plate>
 }
