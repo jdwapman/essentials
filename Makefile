@@ -7,12 +7,12 @@ all: release
 release:
 	mkdir -p build_release
 	cd build_release && cmake -DCMAKE_BUILD_TYPE=RELEASE ..
-	make -C ./build_release
+	$(MAKE) -C ./build_release
 
 debug:
 	mkdir -p build_debug
 	cd build_debug && cmake -DCMAKE_BUILD_TYPE=DEBUG ..
-	make -C ./build_debug
+	$(MAKE) -C ./build_debug
 
 test: release
 	./build_release/bin/tests_main
