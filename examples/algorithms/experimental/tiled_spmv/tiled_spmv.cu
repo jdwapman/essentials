@@ -1,6 +1,7 @@
 #include <gunrock/algorithms/experimental/async/bfs.hxx>
 #include "spmv_cpu.hxx"
 #include "spmv_cusparse.cuh"
+#include "spmv_cub.cuh"
 
 using namespace gunrock;
 using namespace experimental;
@@ -25,7 +26,7 @@ double test_spmv(SPMV_t spmv_impl,
   if (spmv_impl == MGPU) {
     // elapsed_time = spmv_mgpu(sparse_matrix, d_input, d_output);
   } else if (spmv_impl == CUB) {
-    // elapsed_time = spmv_cub(sparse_matrix, d_input, d_output);
+    elapsed_time = spmv_cub(sparse_matrix, d_input, d_output);
   } else if (spmv_impl == CUSPARSE) {
     elapsed_time = spmv_cusparse(sparse_matrix, d_input, d_output);
   } else if (spmv_impl == TILED) {
@@ -46,7 +47,7 @@ double test_spmv(SPMV_t spmv_impl,
     thrust::host_vector<float> cpu_ref(sparse_matrix.number_of_rows);
     cpu_spmv(sparse_matrix, h_input, cpu_ref);
 
-    if(debug) {
+    if (debug) {
       display(d_input, "d_input");
       display(d_output, "d_output");
       display(cpu_ref, "cpu_ref");
@@ -56,8 +57,8 @@ double test_spmv(SPMV_t spmv_impl,
     int num_errors = check_spmv(cpu_ref, h_output);
 
     // Print the number of errors
-    if(debug)
-    printf("Errors: %d\n", num_errors);
+    if (debug)
+      printf("Errors: %d\n", num_errors);
 
     if (!num_errors) {
       if (debug)
@@ -122,8 +123,12 @@ void test_spmv(int num_arguments, char** argument_array) {
   double elapsed_cusparse =
       test_spmv(CUSPARSE, csr, x_device, y_device, cpu_verify, debug);
 
-  printf("%s,%d,%d,%d,%f\n", filename.c_str(), csr.number_of_rows,
-         csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse);
+  double elapsed_cub =
+      test_spmv(CUB, csr, x_device, y_device, cpu_verify, debug);
+
+  printf("%s,%d,%d,%d,%f,%f\n", filename.c_str(), csr.number_of_rows,
+         csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
+         elapsed_cub);
 }
 
 int main(int argc, char** argv) {
