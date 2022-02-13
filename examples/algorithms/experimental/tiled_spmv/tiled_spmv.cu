@@ -2,6 +2,7 @@
 #include "spmv_cpu.hxx"
 #include "spmv_cusparse.cuh"
 #include "spmv_cub.cuh"
+#include "spmv_moderngpu.cuh"
 
 using namespace gunrock;
 using namespace experimental;
@@ -24,7 +25,7 @@ double test_spmv(SPMV_t spmv_impl,
 
   //   Run on appropriate GPU implementation
   if (spmv_impl == MGPU) {
-    // elapsed_time = spmv_mgpu(sparse_matrix, d_input, d_output);
+    elapsed_time = spmv_mgpu(sparse_matrix, d_input, d_output);
   } else if (spmv_impl == CUB) {
     elapsed_time = spmv_cub(sparse_matrix, d_input, d_output);
   } else if (spmv_impl == CUSPARSE) {
@@ -126,9 +127,12 @@ void test_spmv(int num_arguments, char** argument_array) {
   double elapsed_cub =
       test_spmv(CUB, csr, x_device, y_device, cpu_verify, debug);
 
-  printf("%s,%d,%d,%d,%f,%f\n", filename.c_str(), csr.number_of_rows,
+  double elapsed_mgpu =
+      test_spmv(MGPU, csr, x_device, y_device, cpu_verify, debug);
+
+  printf("%s,%d,%d,%d,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
          csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
-         elapsed_cub);
+         elapsed_cub, elapsed_mgpu);
 }
 
 int main(int argc, char** argv) {
