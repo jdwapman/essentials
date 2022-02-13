@@ -1,11 +1,12 @@
-#include <gunrock/algorithms/experimental/async/bfs.hxx>
+#include <gunrock/algorithms/algorithms.hxx>
+
 #include "spmv_cpu.hxx"
 #include "spmv_cusparse.cuh"
 #include "spmv_cub.cuh"
 #include "spmv_moderngpu.cuh"
 
 using namespace gunrock;
-using namespace experimental;
+// using namespace experimental;
 using namespace memory;
 
 enum SPMV_t { MGPU, CUB, CUSPARSE, TILED };
