@@ -26,12 +26,16 @@ double test_spmv(SPMV_t spmv_impl,
 
   //   Run on appropriate GPU implementation
   if (spmv_impl == MGPU) {
+    printf("=== RUNNING MODERNGPU SPMV ===\n");
     elapsed_time = spmv_mgpu(sparse_matrix, d_input, d_output);
   } else if (spmv_impl == CUB) {
+    printf("=== RUNNING CUB SPMV ===\n");
     elapsed_time = spmv_cub(sparse_matrix, d_input, d_output);
   } else if (spmv_impl == CUSPARSE) {
+    printf("=== RUNNING CUSPARSE SPMV ===\n");
     elapsed_time = spmv_cusparse(sparse_matrix, d_input, d_output);
   } else if (spmv_impl == TILED) {
+    printf("=== RUNNING TILED SPMV ===\n");
     // elapsed_time = spmv_tiled(sparse_matrix, d_input, d_output);
   } else {
     std::cout << "Unsupported SPMV implementation" << std::endl;
