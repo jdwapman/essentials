@@ -4,6 +4,7 @@
 #include "spmv_cusparse.cuh"
 #include "spmv_cub.cuh"
 #include "spmv_moderngpu.cuh"
+#include "spmv_utils.cuh"
 
 using namespace gunrock;
 // using namespace experimental;
@@ -111,6 +112,8 @@ void test_spmv(int num_arguments, char** argument_array) {
     exit(1);
   }
 
+  printf("Matrix: %s\n", filename.c_str());
+
   thrust::host_vector<nonzero_t> x_host(csr.number_of_columns);
 
   srand(0);
@@ -119,6 +122,61 @@ void test_spmv(int num_arguments, char** argument_array) {
 
   thrust::device_vector<nonzero_t> x_device = x_host;
   thrust::device_vector<nonzero_t> y_device(csr.number_of_rows);
+
+  // --
+  // Set up cache configuration
+  int device = 0;
+  cudaDeviceProp deviceProp;
+  cudaGetDeviceProperties(&deviceProp, device);
+
+  cudaStream_t stream;
+  cudaStreamCreate(&stream);  // Create CUDA stream
+
+  // Stream level attributes data structure
+  cudaStreamAttrValue stream_attribute;
+
+  if (deviceProp.major >= 8) {
+    // Using Ampere
+
+    size_t size =
+        min(int(deviceProp.l2CacheSize), deviceProp.persistingL2CacheMaxSize);
+
+    // set-aside the full L2 cache for persisting accesses or the max allowed
+    cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, size);
+
+    int num_bytes =
+        (int)
+            x_device.size();  // TODO update this for bytes rather than elements
+    size_t window_size = min(deviceProp.accessPolicyMaxWindowSize,
+                             num_bytes);  // Select minimum of user defined
+                                          // num_bytes and max window size.
+
+    // Global Memory data pointer
+    stream_attribute.accessPolicyWindow.base_ptr =
+        reinterpret_cast<void*>(x_device.data().get());
+
+    // Number of bytes for persistence access
+    stream_attribute.accessPolicyWindow.num_bytes =
+        x_device.size() / sizeof(nonzero_t);
+
+    // Hint for cache hit ratio
+    stream_attribute.accessPolicyWindow.hitRatio = 0.6;
+
+    // Persistence Property
+    stream_attribute.accessPolicyWindow.hitProp = cudaAccessPropertyPersisting;
+
+    // Type of access property on cache miss
+    stream_attribute.accessPolicyWindow.missProp = cudaAccessPropertyStreaming;
+
+    // Set the attributes to a CUDA Stream
+    cudaStreamSetAttribute(
+        stream, cudaStreamAttributeAccessPolicyWindow, &stream_attribute);
+  } else {
+    // Using Volta or below
+    printf(
+        "WARNING: L2 Cache Management available only for compute capabilities "
+        ">= 8\n");
+  }
 
   // --
   // Run the algorithm
