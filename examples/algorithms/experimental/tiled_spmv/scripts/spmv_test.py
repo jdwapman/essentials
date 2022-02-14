@@ -12,7 +12,7 @@ def strip_path(filepath):
 
 
 # Setup Paths for binary and datasets
-BIN = "/home/jwapman/Gunrock/essentials/build_release/bin/spmv"
+BIN = "/home/jwapman/Gunrock/essentials/build_release/bin/tiled_spmv"
 DATASET_BASE = "/data/suitesparse_dataset/MM/"
 DATASET = "DIMACS10"
 
@@ -32,28 +32,29 @@ print(RESULTS_FILE)
 
 results = open(RESULTS_FILE, "w")
 
-results.write("File,rows,cols,nnz,cusparse\n")
+results.write("File,rows,cols,nnz,cusparse,cub,mgpu\n")
 
 PROFILEDIR = "profiles_" + now.strftime("%Y%m%d_%H:%M:%S")
 os.mkdir(PROFILEDIR)
 
 with open("datasets.txt", "r") as datasets:
     for dataset in datasets:
-        benchmark_cmd = BIN + " " + dataset.rstrip() + " | tail -n 1 > temp_spmvbenchmark.txt"
+        benchmark_cmd = "srun " + BIN + " " + \
+            dataset.rstrip() + " | tail -n 1 > temp_spmvbenchmark.txt"
         print(benchmark_cmd)
         retval = subprocess.run(benchmark_cmd, shell=True)
 
-        if retval.returncode == 0:
-            subprocess.run("cat temp_spmvbenchmark.txt >> " +
-                           RESULTS_FILE, shell=True)
+        # if retval.returncode == 0:
+        #     subprocess.run("cat temp_spmvbenchmark.txt >> " +
+        #                    RESULTS_FILE, shell=True)
 
-            # Do profiling
-            MTXNAME = strip_path(dataset)
-            print("Profiling " + MTXNAME)
+        #     # Do profiling
+        #     MTXNAME = strip_path(dataset)
+        #     print("Profiling " + MTXNAME)
 
-            profile_cmd = "ncu --target-processes application-only --replay-mode kernel --kernel-regex-base function --launch-skip-before-match 0 --section ComputeWorkloadAnalysis --section InstructionStats --section LaunchStats --section MemoryWorkloadAnalysis --section MemoryWorkloadAnalysis_Chart --section MemoryWorkloadAnalysis_Deprecated --section MemoryWorkloadAnalysis_Tables --section Occupancy --section SchedulerStats --section SourceCounters --section SpeedOfLight --section SpeedOfLight_RooflineChart --section WarpStateStats --sampling-interval auto --sampling-max-passes 5 --sampling-buffer-size 33554432 --profile-from-start 1 --cache-control all --clock-control base --apply-rules yes --check-exit-code yes --page raw --csv --log-file " + \
-                PROFILEDIR + "/" + MTXNAME + ".log " + BIN + " " + dataset
-            subprocess.run(profile_cmd, shell=True)
+        #     profile_cmd = "ncu --target-processes application-only --replay-mode kernel --kernel-regex-base function --launch-skip-before-match 0 --section ComputeWorkloadAnalysis --section InstructionStats --section LaunchStats --section MemoryWorkloadAnalysis --section MemoryWorkloadAnalysis_Chart --section MemoryWorkloadAnalysis_Deprecated --section MemoryWorkloadAnalysis_Tables --section Occupancy --section SchedulerStats --section SourceCounters --section SpeedOfLight --section SpeedOfLight_RooflineChart --section WarpStateStats --sampling-interval auto --sampling-max-passes 5 --sampling-buffer-size 33554432 --profile-from-start 1 --cache-control all --clock-control base --apply-rules yes --check-exit-code yes --page raw --csv --log-file " + \
+        #         PROFILEDIR + "/" + MTXNAME + ".log " + BIN + " " + dataset
+        #     subprocess.run(profile_cmd, shell=True)
 
 os.remove("temp_spmvbenchmark.txt")
 
