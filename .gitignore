@@ -41,3 +41,6 @@ build_debug
 
 # Ignore external fetched content
 externals/*
+
+# Ignore slurm files
+slurm-*.out
