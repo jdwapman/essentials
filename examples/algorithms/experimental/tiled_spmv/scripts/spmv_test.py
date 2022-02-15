@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SBATCH -p daisy --gpus=V100:1
+# SBATCH -p bowser --gpus=V100:1
 
 import subprocess
 import os
@@ -14,7 +14,7 @@ def strip_path(filepath):
 # Setup Paths for binary and datasets
 BIN = "/home/jwapman/Gunrock/essentials/build_release/bin/tiled_spmv"
 DATASET_BASE = "/data/suitesparse_dataset/MM/"
-DATASET = "DIMACS10"
+DATASET = "DIMACS10/ak2010"
 
 # Search the dataset tree for all .mtx files
 if os.path.exists("datasets.txt"):
@@ -22,7 +22,7 @@ if os.path.exists("datasets.txt"):
 
 find_dataset_command = "find " + DATASET_BASE + \
     DATASET + " -type f -name \"*.mtx\" > datasets.txt"
-print(find_dataset_command)
+# print(find_dataset_command)
 subprocess.run(find_dataset_command, shell=True)
 
 now = datetime.now()
@@ -37,16 +37,21 @@ results.write("File,rows,cols,nnz,cusparse,cub,mgpu\n")
 PROFILEDIR = "profiles_" + now.strftime("%Y%m%d_%H:%M:%S")
 os.mkdir(PROFILEDIR)
 
+
 with open("datasets.txt", "r") as datasets:
     for dataset in datasets:
-        benchmark_cmd = "srun " + BIN + " " + \
+        benchmark_cmd = "srun " + BIN + " -m " + \
             dataset.rstrip() + " | tail -n 1 > temp_spmvbenchmark.txt"
-        print(benchmark_cmd)
-        retval = subprocess.run(benchmark_cmd, shell=True)
+        retval = subprocess.run(benchmark_cmd, shell=True, capture_output=True)
+        print(retval)
 
-        # if retval.returncode == 0:
-        #     subprocess.run("cat temp_spmvbenchmark.txt >> " +
-        #                    RESULTS_FILE, shell=True)
+        if "Exited with exit code 1" in str(retval.stderr):
+            print("Error: " + dataset)
+            continue
+        else:
+            print("Got return code 0 for " + dataset)
+            subprocess.run("cat temp_spmvbenchmark.txt >> " +
+                            RESULTS_FILE, shell=True)
 
         #     # Do profiling
         #     MTXNAME = strip_path(dataset)
