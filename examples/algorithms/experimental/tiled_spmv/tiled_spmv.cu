@@ -1,4 +1,5 @@
 #include <gunrock/algorithms/algorithms.hxx>
+#include <cxxopts.hpp>
 
 #include "spmv_cpu.hxx"
 #include "spmv_cusparse.cuh"
@@ -82,9 +83,46 @@ double test_spmv(SPMV_t spmv_impl,
 }
 
 void test_spmv(int num_arguments, char** argument_array) {
-  if (num_arguments != 2) {
-    std::cerr << "usage: ./bin/<program-name> filename.mtx" << std::endl;
-    exit(1);
+  cxxopts::Options options(argument_array[0],
+                           "Gunrock commandline parser test");
+
+  options.add_options()  // Allows to add options.
+      ("c,csr", "CSR binary file",
+       cxxopts::value<std::string>())  // CSR
+      ("m,market", "Matrix-market format file",
+       cxxopts::value<std::string>())  // Market
+      ("d,device", "Device to run on",
+       cxxopts::value<int>()->default_value("0"))  // Device
+      ("v,verbose", "Verbose output",
+       cxxopts::value<bool>()->default_value("false"))  // Verbose (not used)
+      ("h,help", "Print help");                         // Help
+
+  auto result = options.parse(num_arguments, argument_array);
+
+  if (result.count("help") ||
+      (result.count("market") == 0 && result.count("csr") == 0)) {
+    std::cout << options.help({""}) << std::endl;
+    std::exit(0);
+  }
+
+  std::string filename = "";
+  if (result.count("market") == 1) {
+    filename = result["market"].as<std::string>();
+    if (util::is_market(filename)) {
+    } else {
+      std::cout << options.help({""}) << std::endl;
+      std::exit(0);
+    }
+  } else if (result.count("csr") == 1) {
+    filename = result["csr"].as<std::string>();
+    if (util::is_binary_csr(filename)) {
+    } else {
+      std::cout << options.help({""}) << std::endl;
+      std::exit(0);
+    }
+  } else {
+    std::cout << options.help({""}) << std::endl;
+    std::exit(0);
   }
 
   // --
@@ -100,7 +138,7 @@ void test_spmv(int num_arguments, char** argument_array) {
   // IO
 
   csr_t csr;
-  std::string filename = argument_array[1];
+  // std::string filename = argument_array[1];
 
   if (util::is_market(filename)) {
     io::matrix_market_t<row_t, edge_t, nonzero_t> mm;
@@ -169,8 +207,8 @@ void test_spmv(int num_arguments, char** argument_array) {
     stream_attribute.accessPolicyWindow.missProp = cudaAccessPropertyStreaming;
 
     // Set the attributes to a CUDA Stream
-    cudaStreamSetAttribute(
-        stream, cudaStreamAttributeAccessPolicyWindow, &stream_attribute);
+    cudaStreamSetAttribute(stream, cudaStreamAttributeAccessPolicyWindow,
+                           &stream_attribute);
   } else {
     // Using Volta or below
     printf(
