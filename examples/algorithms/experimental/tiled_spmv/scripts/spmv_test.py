@@ -13,8 +13,8 @@ def strip_path(filepath):
 
 # Setup Paths for binary and datasets
 BIN = "/home/jwapman/Gunrock/essentials/build_release/bin/tiled_spmv"
-DATASET_BASE = "/data/suitesparse_dataset/MM/"
-DATASET = "DIMACS10/ak2010"
+DATASET_BASE = "/data/suitesparse_dataset/MM/"  # Must have a "/" at the end
+DATASET = "DIMACS10"
 
 # Search the dataset tree for all .mtx files
 if os.path.exists("datasets.txt"):
@@ -37,7 +37,6 @@ results.write("File,rows,cols,nnz,cusparse,cub,mgpu\n")
 PROFILEDIR = "profiles_" + now.strftime("%Y%m%d_%H:%M:%S")
 os.mkdir(PROFILEDIR)
 
-
 with open("datasets.txt", "r") as datasets:
     for dataset in datasets:
         benchmark_cmd = "srun " + BIN + " -m " + \
@@ -51,7 +50,7 @@ with open("datasets.txt", "r") as datasets:
         else:
             print("Got return code 0 for " + dataset)
             subprocess.run("cat temp_spmvbenchmark.txt >> " +
-                            RESULTS_FILE, shell=True)
+                           RESULTS_FILE, shell=True)
 
         #     # Do profiling
         #     MTXNAME = strip_path(dataset)
