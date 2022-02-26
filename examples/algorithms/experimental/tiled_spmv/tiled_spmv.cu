@@ -1,4 +1,5 @@
 #include <gunrock/algorithms/algorithms.hxx>
+#include <cuda_runtime_api.h>
 #include <cxxopts.hpp>
 
 #include "spmv_cpu.hxx"
@@ -16,12 +17,12 @@ enum SPMV_t { MGPU, CUB, CUSPARSE, TILED };
 enum LB_t { THREAD_PER_ROW, WARP_PER_ROW, BLOCK_PER_ROW, MERGE_PATH };
 
 template <typename vector_t>
-void setup_ampere_cache(vector_t *pinned_mem) {
+cudaError_t setup_ampere_cache(vector_t *pinned_mem) {
   // --
   // Set up cache configuration
   int device = 0;
   cudaDeviceProp deviceProp;
-  cudaGetDeviceProperties(&deviceProp, device);
+  CHECK_CUDA(cudaGetDeviceProperties(&deviceProp, device))
 
   cudaStream_t stream;
   cudaStreamCreate(&stream);  // Create CUDA stream
@@ -36,7 +37,7 @@ void setup_ampere_cache(vector_t *pinned_mem) {
         min(int(deviceProp.l2CacheSize), deviceProp.persistingL2CacheMaxSize);
 
     // set-aside the full L2 cache for persisting accesses or the max allowed
-    cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, size);
+    CHECK_CUDA(cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, size));
 
     int num_bytes =
         (int)pinned_mem
@@ -63,14 +64,16 @@ void setup_ampere_cache(vector_t *pinned_mem) {
     stream_attribute.accessPolicyWindow.missProp = cudaAccessPropertyStreaming;
 
     // Set the attributes to a CUDA Stream
-    cudaStreamSetAttribute(stream, cudaStreamAttributeAccessPolicyWindow,
-                           &stream_attribute);
+    CHECK_CUDA(cudaStreamSetAttribute(
+        stream, cudaStreamAttributeAccessPolicyWindow, &stream_attribute));
   } else {
     // Using Volta or below
     printf(
         "WARNING: L2 Cache Management available only for compute capabilities "
         ">= 8\n");
   }
+
+  return cudaSuccess;
 }
 
 template <typename csr_t, typename vector_t>

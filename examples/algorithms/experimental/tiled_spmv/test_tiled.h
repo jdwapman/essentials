@@ -376,6 +376,9 @@ using namespace memory;
 //   const bool debug;
 // };
 
+template <typename graph_t>
+__global__ void spmv_tiled_kernel() {}
+
 // template <typename index_t = int, typename value_t = float>
 // __global__ void spmv_tiled_kernel(
 //     const index_t num_rows, const index_t num_cols, const index_t
@@ -430,7 +433,7 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   /* ========== Setup Device Properties ========== */
   auto device = 0;
   cudaDeviceProp deviceProp;
-  cudaGetDeviceProperties(&deviceProp, device);
+  CHECK_CUDA(cudaGetDeviceProperties(&deviceProp, device));
 
   // Setup grid and block properties
   auto numBlocksPerSm = 0;
@@ -455,16 +458,15 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   if (store_end_offsets_in_shmem) {
     data_elems_per_row = 2;
   }
-  auto rows_per_block = (shmemPerBlock / (sizeof(row_t) *
-  data_elems_per_row));
+  auto rows_per_block = (shmemPerBlock / (sizeof(row_t) * data_elems_per_row));
 
   std::cout << "Threads Per Block: " << numThreadsPerBlock << std::endl;
   std::cout << "Rows Per Block: " << rows_per_block << std::endl;
   std::cout << "Shmem Per Block (bytes): " << shmemPerBlock << std::endl;
 
-  // CHECK_CUDA(cudaFuncSetAttribute(spmv_tiled_kernel<index_t, value_t>,
-  //                                 cudaFuncAttributeMaxDynamicSharedMemorySize,
-  //                                 shmemPerBlock));
+  CHECK_CUDA(cudaFuncSetAttribute(spmv_tiled_kernel<decltype(G)>,
+                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                  shmemPerBlock));
 
   // // Need to know the max occupancy to determine how many blocks to launch
   // for
