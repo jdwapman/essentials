@@ -7,11 +7,15 @@
 
 namespace cg = cooperative_groups;
 
+using namespace gunrock;
+using namespace memory;
+
 // template <typename index_t>
 // __device__ __forceinline__ index_t global2tile(const index_t &global_idx,
 //                                                const index_t &tile_size)
 // {
-//   // Note that this function assumes a valid global index and does not attempt
+//   // Note that this function assumes a valid global index and does not
+//   attempt
 //   // to perform bounds checking for partial tiles
 
 //   // Tile_index + offset_within_tile
@@ -25,7 +29,8 @@ namespace cg = cooperative_groups;
 //                                                const index_t &tile_idx,
 //                                                const index_t &tile_size)
 // {
-//   // Note that this function does not attempt to perform bounds checking for the
+//   // Note that this function does not attempt to perform bounds checking for
+//   the
 //   // final tile
 
 //   index_t global_idx = local_idx + (tile_idx * tile_size);
@@ -39,10 +44,10 @@ namespace cg = cooperative_groups;
 // public:
 //   __device__ TileIterator(const index_t _num_rows, const index_t _num_cols,
 //                           const index_t _num_nonzeros,
-//                           const index_t *_row_offsets, const index_t *_col_idx,
-//                           const value_t *_nonzeros, const value_t *_input,
-//                           value_t *_output, const index_t _rows_per_block_tile,
-//                           const index_t _tile_col_size,
+//                           const index_t *_row_offsets, const index_t
+//                           *_col_idx, const value_t *_nonzeros, const value_t
+//                           *_input, value_t *_output, const index_t
+//                           _rows_per_block_tile, const index_t _tile_col_size,
 //                           index_t *shmem, index_t *_lb_stats,
 //                           const bool _store_end_offsets_in_shmem,
 //                           const bool _debug)
@@ -58,7 +63,8 @@ namespace cg = cooperative_groups;
 //         store_end_offsets_in_shmem(_store_end_offsets_in_shmem),
 //         debug(_debug)
 //   {
-//     // MemoryAllocator allocator((size_t*)shmem, (size_t)(_rows_per_block_tile *2* sizeof(index_t)));
+//     // MemoryAllocator allocator((size_t*)shmem,
+//     (size_t)(_rows_per_block_tile *2* sizeof(index_t)));
 
 //     rows_per_block_tile = _rows_per_block_tile;
 //     rows_per_gpu_tile = _rows_per_block_tile * gridDim.x;
@@ -72,9 +78,9 @@ namespace cg = cooperative_groups;
 //     lb_stats = _lb_stats;
 //   }
 
-  
 //   __device__ __forceinline__ index_t
-//   row_elems_in_tile(const index_t &global_row_idx, const index_t &block_row_idx,
+//   row_elems_in_tile(const index_t &global_row_idx, const index_t
+//   &block_row_idx,
 //                     const index_t &tile_boundary)
 //   {
 //     assert(store_end_offsets_in_shmem);
@@ -133,12 +139,14 @@ namespace cg = cooperative_groups;
 //       printf("Loading Metadata for tile (%d,...) into shmem\n",
 //              cur_row_tile_idx);
 //     }
-//     // Need to simultaneously keep track of the current row in the tile as well
+//     // Need to simultaneously keep track of the current row in the tile as
+//     well
 //     // as the row index in the global coordinates
 
 //     int cur_row_in_gpu_tile = blockIdx.x * rows_per_block_tile + threadIdx.x;
 //     int cur_row_in_matrix =
-//         tile2global(cur_row_in_gpu_tile, cur_row_tile_idx, rows_per_gpu_tile);
+//         tile2global(cur_row_in_gpu_tile, cur_row_tile_idx,
+//         rows_per_gpu_tile);
 
 //     int cur_row_in_block_tile = threadIdx.x;
 
@@ -159,7 +167,8 @@ namespace cg = cooperative_groups;
 //             row_offsets[cur_row_in_matrix + 1];
 //       }
 //       // printf(
-//       //     "Block %d Loading matrix row %d block tile idx %d gpu tile idx %d "
+//       //     "Block %d Loading matrix row %d block tile idx %d gpu tile idx
+//       %d "
 //       //     "offset %d\n",
 //       //     blockIdx.x, cur_row_in_matrix, cur_row_in_block_tile,
 //       //     cur_row_in_gpu_tile, local_row_offsets[cur_row_in_block_tile]);
@@ -174,7 +183,8 @@ namespace cg = cooperative_groups;
 
 //   __device__ __forceinline__ void evict_secondary_tile()
 //   {
-//     // In the src-first implementation, there is nothing to do for this function
+//     // In the src-first implementation, there is nothing to do for this
+//     function
 //     // except maybe resetting the L2 cache
 //   }
 
@@ -237,7 +247,8 @@ namespace cg = cooperative_groups;
 
 //     int cur_row_in_gpu_tile = blockIdx.x * rows_per_block_tile + threadIdx.x;
 //     int cur_row_in_matrix =
-//         tile2global(cur_row_in_gpu_tile, cur_row_tile_idx, rows_per_gpu_tile);
+//         tile2global(cur_row_in_gpu_tile, cur_row_tile_idx,
+//         rows_per_gpu_tile);
 
 //     int cur_row_in_block_tile = threadIdx.x;
 
@@ -367,18 +378,18 @@ namespace cg = cooperative_groups;
 
 // template <typename index_t = int, typename value_t = float>
 // __global__ void spmv_tiled_kernel(
-//     const index_t num_rows, const index_t num_cols, const index_t num_nonzeros,
-//     const index_t *row_offsets, const index_t *col_idx, const value_t *nonzeros,
-//     const value_t *input, value_t *output, const index_t rows_per_block_tile,
-//     const index_t tile_col_size, index_t *lb_stats,
+//     const index_t num_rows, const index_t num_cols, const index_t
+//     num_nonzeros, const index_t *row_offsets, const index_t *col_idx, const
+//     value_t *nonzeros, const value_t *input, value_t *output, const index_t
+//     rows_per_block_tile, const index_t tile_col_size, index_t *lb_stats,
 //     const bool store_end_offsets_in_shmem, const bool debug)
 // {
 //   // Store the output in shared memory
 //   extern __shared__ index_t shmem[];
 
 //   TileIterator<int, float> iterator(
-//       num_rows, num_cols, num_nonzeros, row_offsets, col_idx, nonzeros, input,
-//       output, rows_per_block_tile, tile_col_size, shmem, lb_stats,
+//       num_rows, num_cols, num_nonzeros, row_offsets, col_idx, nonzeros,
+//       input, output, rows_per_block_tile, tile_col_size, shmem, lb_stats,
 //       store_end_offsets_in_shmem, debug);
 
 //   iterator.process_all_tiles();
@@ -396,54 +407,71 @@ namespace cg = cooperative_groups;
 // }
 
 template <typename csr_t, typename vector_t>
-double spmv_tiled(csr_t& A, vector_t& input, vector_t& output)
-{
-  // bool debug = false;
+double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
+  auto debug = false;
 
-  // /* ========== Setup Device Properties ========== */
-  // int device = 0;
-  // cudaDeviceProp deviceProp;
-  // CHECK_CUDA(cudaGetDeviceProperties(&deviceProp, device))
+  // --
+  // Build graph
 
-  // // Setup grid and block properties
-  // int numBlocksPerSm = 0;
-  // int numThreadsPerBlock = 0;
-  // int shmemPerBlock = 0; // bytes
+  // Convert the dataset you loaded into an `essentials` graph.
+  // `memory_space_t::device` -> the graph will be created on the GPU.
+  // `graph::view_t::csr`     -> your input data is in `csr` format.
+  //
+  // Note that `graph::build::from_csr` expects pointers, but the `csr` data
+  // arrays are `thrust` vectors, so we need to unwrap them w/ `.data().get()`.
+  auto G = graph::build::from_csr<memory_space_t::device, graph::view_t::csr>(
+      csr.number_of_rows, csr.number_of_columns, csr.number_of_nonzeros,
+      csr.row_offsets.data().get(), csr.column_indices.data().get(),
+      csr.nonzero_values.data().get());
 
-  // int target_occupancy = 1;
+  // Need the types of the csr matrix for kernel setup
+  using row_t = decltype(csr.row_offsets.data().get()[0]);
 
-  // // Number of coordinates. TODO calculate this
-  // // based on architecture L2 properties
-  // index_t tile_size = 0;
+  /* ========== Setup Device Properties ========== */
+  auto device = 0;
+  cudaDeviceProp deviceProp;
+  cudaGetDeviceProperties(&deviceProp, device);
 
-  // // Use the max number of threads per block to maximize parallelism over shmem
+  // Setup grid and block properties
+  auto numBlocksPerSm = 0;
+  auto numThreadsPerBlock = 0;
+  auto shmemPerBlock = 0;  // bytes
 
-  // numThreadsPerBlock = deviceProp.maxThreadsPerBlock / target_occupancy;
-  // shmemPerBlock = (deviceProp.sharedMemPerBlockOptin / target_occupancy);
+  auto target_occupancy = 1;
 
-  // bool store_end_offsets_in_shmem = true;
+  // Number of coordinates. TODO calculate this
+  // based on architecture L2 properties
+  auto tile_size = 0;
 
-  // index_t data_elems_per_row = 1;
-  // if (store_end_offsets_in_shmem)
-  // {
-  //   data_elems_per_row = 2;
-  // }
-  // index_t rows_per_block =
-  //     (shmemPerBlock / (sizeof(index_t) * data_elems_per_row));
+  // Use the max number of threads per block to maximize parallelism over
+  // shmem
 
-  // printf("Threads Per Block: %d\n", numThreadsPerBlock);
-  // printf("Rows Per Block: %d\n", rows_per_block);
-  // printf("Shmem Per Block (bytes): %d\n", shmemPerBlock);
+  numThreadsPerBlock = deviceProp.maxThreadsPerBlock / target_occupancy;
+  shmemPerBlock = (deviceProp.sharedMemPerBlockOptin / target_occupancy);
+
+  auto store_end_offsets_in_shmem = true;
+
+  auto data_elems_per_row = 1;
+  if (store_end_offsets_in_shmem) {
+    data_elems_per_row = 2;
+  }
+  auto rows_per_block = (shmemPerBlock / (sizeof(row_t) *
+  data_elems_per_row));
+
+  std::cout << "Threads Per Block: " << numThreadsPerBlock << std::endl;
+  std::cout << "Rows Per Block: " << rows_per_block << std::endl;
+  std::cout << "Shmem Per Block (bytes): " << shmemPerBlock << std::endl;
 
   // CHECK_CUDA(cudaFuncSetAttribute(spmv_tiled_kernel<index_t, value_t>,
   //                                 cudaFuncAttributeMaxDynamicSharedMemorySize,
   //                                 shmemPerBlock));
 
-  // // Need to know the max occupancy to determine how many blocks to launch for
+  // // Need to know the max occupancy to determine how many blocks to launch
+  // for
   // // the cooperative kernel. All blocks must be resident on SMs
   // CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-  //     &numBlocksPerSm, spmv_tiled_kernel<index_t, value_t>, numThreadsPerBlock,
-  //     shmemPerBlock))
+  //     &numBlocksPerSm, spmv_tiled_kernel<index_t, value_t>,
+  //     numThreadsPerBlock, shmemPerBlock))
 
   // printf("Blocks per SM: %d\n", numBlocksPerSm);
 
@@ -481,7 +509,8 @@ double spmv_tiled(csr_t& A, vector_t& input, vector_t& output)
   //   // Using Ampere
 
   //   size_t size =
-  //       min(int(deviceProp.l2CacheSize), deviceProp.persistingL2CacheMaxSize);
+  //       min(int(deviceProp.l2CacheSize),
+  //       deviceProp.persistingL2CacheMaxSize);
 
   //   // size is in bytes. Need to convert to elements
   //   tile_size = size / sizeof(value_t);
@@ -489,8 +518,9 @@ double spmv_tiled(csr_t& A, vector_t& input, vector_t& output)
   //   // set-aside the full L2 cache for persisting accesses or the max allowed
   //   CHECK_CUDA(cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, size));
 
-  //   int num_bytes = (int)input.size(); // TODO update this for bytes rather than elements
-  //   size_t window_size = min(deviceProp.accessPolicyMaxWindowSize,
+  //   int num_bytes = (int)input.size(); // TODO update this for bytes rather
+  //   than elements size_t window_size =
+  //   min(deviceProp.accessPolicyMaxWindowSize,
   //                            num_bytes); // Select minimum of user defined
   //                                        // num_bytes and max window size.
 
@@ -506,10 +536,12 @@ double spmv_tiled(csr_t& A, vector_t& input, vector_t& output)
   //   stream_attribute.accessPolicyWindow.hitRatio = 0.6;
 
   //   // Persistence Property
-  //   stream_attribute.accessPolicyWindow.hitProp = cudaAccessPropertyPersisting;
+  //   stream_attribute.accessPolicyWindow.hitProp =
+  //   cudaAccessPropertyPersisting;
 
   //   // Type of access property on cache miss
-  //   stream_attribute.accessPolicyWindow.missProp = cudaAccessPropertyStreaming;
+  //   stream_attribute.accessPolicyWindow.missProp =
+  //   cudaAccessPropertyStreaming;
 
   //   // Set the attributes to a CUDA Stream
   //   CHECK_CUDA(cudaStreamSetAttribute(
@@ -519,7 +551,8 @@ double spmv_tiled(csr_t& A, vector_t& input, vector_t& output)
   // {
   //   // Using Volta or below
   //   printf(
-  //       "WARNING: L2 Cache Management available only for compute capabilities "
+  //       "WARNING: L2 Cache Management available only for compute capabilities
+  //       "
   //       "> 8\n");
 
   //   tile_size = (deviceProp.l2CacheSize / 2) / sizeof(value_t);
@@ -531,7 +564,8 @@ double spmv_tiled(csr_t& A, vector_t& input, vector_t& output)
   // /* ========== Execute SPMV ========== */
   // Timer t;
   // t.start();
-  // CHECK_CUDA(cudaLaunchCooperativeKernel((void *)spmv_tiled_kernel<int, float>,
+  // CHECK_CUDA(cudaLaunchCooperativeKernel((void *)spmv_tiled_kernel<int,
+  // float>,
   //                                        dimGrid, dimBlock, kernelArgs,
   //                                        shmemPerBlock, stream))
 
@@ -554,4 +588,5 @@ double spmv_tiled(csr_t& A, vector_t& input, vector_t& output)
   // }
 
   // return t.elapsed();
+  return 0;
 }
