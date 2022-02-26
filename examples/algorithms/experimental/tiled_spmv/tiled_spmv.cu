@@ -5,6 +5,7 @@
 #include "spmv_cusparse.cuh"
 #include "spmv_cub.cuh"
 #include "spmv_moderngpu.cuh"
+#include "test_tiled.h"
 #include "spmv_utils.cuh"
 
 using namespace gunrock;
@@ -38,7 +39,7 @@ double test_spmv(SPMV_t spmv_impl,
     elapsed_time = spmv_cusparse(sparse_matrix, d_input, d_output);
   } else if (spmv_impl == TILED) {
     printf("=== RUNNING TILED SPMV ===\n");
-    // elapsed_time = spmv_tiled(sparse_matrix, d_input, d_output);
+    elapsed_time = spmv_tiled(sparse_matrix, d_input, d_output);
   } else {
     std::cout << "Unsupported SPMV implementation" << std::endl;
   }
@@ -231,9 +232,12 @@ void test_spmv(int num_arguments, char** argument_array) {
   double elapsed_mgpu =
       test_spmv(MGPU, csr, x_device, y_device, cpu_verify, debug);
 
-  printf("%s,%d,%d,%d,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
+  double elapsed_tiled = test_spmv(TILED, csr, x_device, y_device, cpu_verify,
+                                  debug);
+
+  printf("%s,%d,%d,%d,%f,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
          csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
-         elapsed_cub, elapsed_mgpu);
+         elapsed_cub, elapsed_mgpu, elapsed_tiled);
 }
 
 int main(int argc, char** argv) {
