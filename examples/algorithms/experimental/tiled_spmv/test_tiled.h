@@ -468,29 +468,23 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
                                   cudaFuncAttributeMaxDynamicSharedMemorySize,
                                   shmemPerBlock));
 
-  // // Need to know the max occupancy to determine how many blocks to launch
-  // for
-  // // the cooperative kernel. All blocks must be resident on SMs
-  // CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-  //     &numBlocksPerSm, spmv_tiled_kernel<index_t, value_t>,
-  //     numThreadsPerBlock, shmemPerBlock))
+  // Need to know the max occupancy to determine how many blocks to launch
+  // for the cooperative kernel. All blocks must be resident on SMs
+  CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+      &numBlocksPerSm, spmv_tiled_kernel<decltype(G)>, numThreadsPerBlock,
+      shmemPerBlock))
 
-  // printf("Blocks per SM: %d\n", numBlocksPerSm);
+  std::cout << "Max Active Blocks Per SM: " << numBlocksPerSm << std::endl;
 
-  // dim3 dimBlock(numThreadsPerBlock, 1, 1);
-  // dim3 dimGrid(deviceProp.multiProcessorCount * numBlocksPerSm, 1, 1);
+  dim3 dimBlock(numThreadsPerBlock, 1, 1);
+  dim3 dimGrid(deviceProp.multiProcessorCount * numBlocksPerSm, 1, 1);
 
-  // /* ========== SPACE FOR LOAD BALANCE STATS ========== */
-  // // Allocate a location for each thread?
-  // thrust::host_vector<int> h_lb_stats(dimGrid.x, 0);
-  // thrust::device_vector<int> d_lb_stats = h_lb_stats;
-
-  // /* ========== Setup Kernel Call ========== */
+  /* ========== Setup Kernel Call ========== */
   // void *row_offsets = thrust::raw_pointer_cast(A.d_row_offsets.data());
   // void *col_idx = thrust::raw_pointer_cast(A.d_col_idx.data());
   // void *nonzeros = thrust::raw_pointer_cast(A.d_nonzero_vals.data());
-  // void *input_ptr = thrust::raw_pointer_cast(input.data());
-  // void *output_ptr = thrust::raw_pointer_cast(output.data());
+  void* input_ptr = thrust::raw_pointer_cast(input.data());
+  void* output_ptr = thrust::raw_pointer_cast(output.data());
   // void *d_lb_stats_ptr = thrust::raw_pointer_cast(d_lb_stats.data());
   // void *kernelArgs[] = {
   //     &A.num_rows, &A.num_columns, &A.num_nonzeros,
@@ -499,96 +493,63 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   //     &tile_size, &d_lb_stats_ptr, &store_end_offsets_in_shmem,
   //     &debug};
 
-  // /* ========== SETUP AMPERE CACHE PINNING ========== */
-  // cudaStream_t stream;
-  // CHECK_CUDA(cudaStreamCreate(&stream)); // Create CUDA stream
+  void* kernelArgs[] = {&G, &input_ptr, &output_ptr, &rows_per_block,
+                        &tile_size};
 
-  // // Stream level attributes data structure
-  // cudaStreamAttrValue stream_attribute;
+  /* ========== SETUP TILE SIZE ========== */
+  cudaStream_t stream;
+  CHECK_CUDA(cudaStreamCreate(&stream));  // Create CUDA stream
 
-  // if (deviceProp.major > 8)
-  // {
-  //   // Using Ampere
+  // Stream level attributes data structure
+  cudaStreamAttrValue stream_attribute;
 
-  //   size_t size =
-  //       min(int(deviceProp.l2CacheSize),
-  //       deviceProp.persistingL2CacheMaxSize);
+  if (deviceProp.major > 8) {
+    // Using Ampere
 
-  //   // size is in bytes. Need to convert to elements
-  //   tile_size = size / sizeof(value_t);
+    size_t size =
+        min(int(deviceProp.l2CacheSize), deviceProp.persistingL2CacheMaxSize);
 
-  //   // set-aside the full L2 cache for persisting accesses or the max allowed
-  //   CHECK_CUDA(cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, size));
+    // size is in bytes. Need to convert to elements
+    tile_size = size / sizeof(row_t);
+  }
+    else {
+      // Using Volta or below
+      printf(
+          "WARNING: L2 Cache Management available only for compute capabilities > 8\n");
 
-  //   int num_bytes = (int)input.size(); // TODO update this for bytes rather
-  //   than elements size_t window_size =
-  //   min(deviceProp.accessPolicyMaxWindowSize,
-  //                            num_bytes); // Select minimum of user defined
-  //                                        // num_bytes and max window size.
+      tile_size =
+          (deviceProp.l2CacheSize / data_elems_per_row) / sizeof(row_t);
+    }
 
-  //   // Global Memory data pointer
-  //   stream_attribute.accessPolicyWindow.base_ptr =
-  //       reinterpret_cast<void *>(input_ptr);
+    printf("Tile Size (elements): %d * %d, %d\n", rows_per_block, dimGrid.x,
+           tile_size);
 
-  //   // Number of bytes for persistence access
-  //   stream_attribute.accessPolicyWindow.num_bytes =
-  //       input.size() / sizeof(value_t);
+    // /* ========== Execute SPMV ========== */
+    // Timer t;
+    // t.start();
+    // CHECK_CUDA(cudaLaunchCooperativeKernel((void *)spmv_tiled_kernel<int,
+    // float>,
+    //                                        dimGrid, dimBlock, kernelArgs,
+    //                                        shmemPerBlock, stream))
 
-  //   // Hint for cache hit ratio
-  //   stream_attribute.accessPolicyWindow.hitRatio = 0.6;
+    // CHECK_CUDA(cudaDeviceSynchronize())
+    // t.stop();
 
-  //   // Persistence Property
-  //   stream_attribute.accessPolicyWindow.hitProp =
-  //   cudaAccessPropertyPersisting;
+    // /* ========== RESET THE GPU ========== */
 
-  //   // Type of access property on cache miss
-  //   stream_attribute.accessPolicyWindow.missProp =
-  //   cudaAccessPropertyStreaming;
+    // if (deviceProp.major > 8)
+    // {
+    //   // Setting the window size to 0 disable it
+    //   stream_attribute.accessPolicyWindow.num_bytes = 0;
 
-  //   // Set the attributes to a CUDA Stream
-  //   CHECK_CUDA(cudaStreamSetAttribute(
-  //       stream, cudaStreamAttributeAccessPolicyWindow, &stream_attribute));
-  // }
-  // else
-  // {
-  //   // Using Volta or below
-  //   printf(
-  //       "WARNING: L2 Cache Management available only for compute capabilities
-  //       "
-  //       "> 8\n");
+    //   // Overwrite the access policy attribute to a CUDA Stream
+    //   CHECK_CUDA(cudaStreamSetAttribute(
+    //       stream, cudaStreamAttributeAccessPolicyWindow, &stream_attribute));
 
-  //   tile_size = (deviceProp.l2CacheSize / 2) / sizeof(value_t);
-  // }
+    //   // Remove any persistent lines in L2
+    //   CHECK_CUDA(cudaCtxResetPersistingL2Cache());
+    // }
 
-  // printf("Tile Size (elements): %d * %d, %d\n", rows_per_block, dimGrid.x,
-  //        tile_size);
-
-  // /* ========== Execute SPMV ========== */
-  // Timer t;
-  // t.start();
-  // CHECK_CUDA(cudaLaunchCooperativeKernel((void *)spmv_tiled_kernel<int,
-  // float>,
-  //                                        dimGrid, dimBlock, kernelArgs,
-  //                                        shmemPerBlock, stream))
-
-  // CHECK_CUDA(cudaDeviceSynchronize())
-  // t.stop();
-
-  // /* ========== RESET THE GPU ========== */
-
-  // if (deviceProp.major > 8)
-  // {
-  //   // Setting the window size to 0 disable it
-  //   stream_attribute.accessPolicyWindow.num_bytes = 0;
-
-  //   // Overwrite the access policy attribute to a CUDA Stream
-  //   CHECK_CUDA(cudaStreamSetAttribute(
-  //       stream, cudaStreamAttributeAccessPolicyWindow, &stream_attribute));
-
-  //   // Remove any persistent lines in L2
-  //   CHECK_CUDA(cudaCtxResetPersistingL2Cache());
-  // }
-
-  // return t.elapsed();
-  return 0;
-}
+    // return t.elapsed();
+    return 0;
+  }

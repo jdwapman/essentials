@@ -17,7 +17,7 @@ enum SPMV_t { MGPU, CUB, CUSPARSE, TILED };
 enum LB_t { THREAD_PER_ROW, WARP_PER_ROW, BLOCK_PER_ROW, MERGE_PATH };
 
 template <typename vector_t>
-cudaError_t setup_ampere_cache(vector_t *pinned_mem) {
+void setup_ampere_cache(vector_t *pinned_mem) {
   // --
   // Set up cache configuration
   int device = 0;
@@ -72,8 +72,6 @@ cudaError_t setup_ampere_cache(vector_t *pinned_mem) {
         "WARNING: L2 Cache Management available only for compute capabilities "
         ">= 8\n");
   }
-
-  return cudaSuccess;
 }
 
 template <typename csr_t, typename vector_t>
