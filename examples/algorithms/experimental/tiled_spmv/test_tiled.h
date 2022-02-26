@@ -503,7 +503,7 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   // Stream level attributes data structure
   cudaStreamAttrValue stream_attribute;
 
-  if (deviceProp.major > 8) {
+  if (deviceProp.major >= 8) {
     // Using Ampere
 
     size_t size =
