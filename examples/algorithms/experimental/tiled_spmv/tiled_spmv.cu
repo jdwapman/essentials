@@ -15,6 +15,64 @@ using namespace memory;
 enum SPMV_t { MGPU, CUB, CUSPARSE, TILED };
 enum LB_t { THREAD_PER_ROW, WARP_PER_ROW, BLOCK_PER_ROW, MERGE_PATH };
 
+template <typename vector_t>
+void setup_ampere_cache(vector_t *pinned_mem) {
+  // --
+  // Set up cache configuration
+  int device = 0;
+  cudaDeviceProp deviceProp;
+  cudaGetDeviceProperties(&deviceProp, device);
+
+  cudaStream_t stream;
+  cudaStreamCreate(&stream);  // Create CUDA stream
+
+  // Stream level attributes data structure
+  cudaStreamAttrValue stream_attribute;
+
+  if (deviceProp.major >= 8) {
+    // Using Ampere
+
+    size_t size =
+        min(int(deviceProp.l2CacheSize), deviceProp.persistingL2CacheMaxSize);
+
+    // set-aside the full L2 cache for persisting accesses or the max allowed
+    cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, size);
+
+    int num_bytes =
+        (int)pinned_mem
+            ->size();  // TODO update this for bytes rather than elements
+    size_t window_size = min(deviceProp.accessPolicyMaxWindowSize,
+                             num_bytes);  // Select minimum of user defined
+                                          // num_bytes and max window size.
+
+    // Global Memory data pointer
+    stream_attribute.accessPolicyWindow.base_ptr =
+        reinterpret_cast<void*>(pinned_mem->data()->get());
+
+    // Number of bytes for persistence access
+    stream_attribute.accessPolicyWindow.num_bytes =
+        pinned_mem->size() / sizeof(pinned_mem[0]);
+
+    // Hint for cache hit ratio
+    stream_attribute.accessPolicyWindow.hitRatio = 0.6;
+
+    // Persistence Property
+    stream_attribute.accessPolicyWindow.hitProp = cudaAccessPropertyPersisting;
+
+    // Type of access property on cache miss
+    stream_attribute.accessPolicyWindow.missProp = cudaAccessPropertyStreaming;
+
+    // Set the attributes to a CUDA Stream
+    cudaStreamSetAttribute(stream, cudaStreamAttributeAccessPolicyWindow,
+                           &stream_attribute);
+  } else {
+    // Using Volta or below
+    printf(
+        "WARNING: L2 Cache Management available only for compute capabilities "
+        ">= 8\n");
+  }
+}
+
 template <typename csr_t, typename vector_t>
 double test_spmv(SPMV_t spmv_impl,
                  csr_t& sparse_matrix,
@@ -163,61 +221,6 @@ void test_spmv(int num_arguments, char** argument_array) {
   thrust::device_vector<nonzero_t> y_device(csr.number_of_rows);
 
   // --
-  // Set up cache configuration
-  int device = 0;
-  cudaDeviceProp deviceProp;
-  cudaGetDeviceProperties(&deviceProp, device);
-
-  cudaStream_t stream;
-  cudaStreamCreate(&stream);  // Create CUDA stream
-
-  // Stream level attributes data structure
-  cudaStreamAttrValue stream_attribute;
-
-  if (deviceProp.major >= 8) {
-    // Using Ampere
-
-    size_t size =
-        min(int(deviceProp.l2CacheSize), deviceProp.persistingL2CacheMaxSize);
-
-    // set-aside the full L2 cache for persisting accesses or the max allowed
-    cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, size);
-
-    int num_bytes =
-        (int)
-            x_device.size();  // TODO update this for bytes rather than elements
-    size_t window_size = min(deviceProp.accessPolicyMaxWindowSize,
-                             num_bytes);  // Select minimum of user defined
-                                          // num_bytes and max window size.
-
-    // Global Memory data pointer
-    stream_attribute.accessPolicyWindow.base_ptr =
-        reinterpret_cast<void*>(x_device.data().get());
-
-    // Number of bytes for persistence access
-    stream_attribute.accessPolicyWindow.num_bytes =
-        x_device.size() / sizeof(nonzero_t);
-
-    // Hint for cache hit ratio
-    stream_attribute.accessPolicyWindow.hitRatio = 0.6;
-
-    // Persistence Property
-    stream_attribute.accessPolicyWindow.hitProp = cudaAccessPropertyPersisting;
-
-    // Type of access property on cache miss
-    stream_attribute.accessPolicyWindow.missProp = cudaAccessPropertyStreaming;
-
-    // Set the attributes to a CUDA Stream
-    cudaStreamSetAttribute(stream, cudaStreamAttributeAccessPolicyWindow,
-                           &stream_attribute);
-  } else {
-    // Using Volta or below
-    printf(
-        "WARNING: L2 Cache Management available only for compute capabilities "
-        ">= 8\n");
-  }
-
-  // --
   // Run the algorithm
 
   bool cpu_verify = true;
@@ -232,8 +235,8 @@ void test_spmv(int num_arguments, char** argument_array) {
   double elapsed_mgpu =
       test_spmv(MGPU, csr, x_device, y_device, cpu_verify, debug);
 
-  double elapsed_tiled = test_spmv(TILED, csr, x_device, y_device, cpu_verify,
-                                  debug);
+  double elapsed_tiled =
+      test_spmv(TILED, csr, x_device, y_device, cpu_verify, debug);
 
   printf("%s,%d,%d,%d,%f,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
          csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
