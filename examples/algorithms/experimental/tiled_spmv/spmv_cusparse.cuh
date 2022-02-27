@@ -48,8 +48,8 @@ double spmv_cusparse(csr_t& A, vector_t& input, vector_t& output) {
   // allocate an external buffer if needed
   CHECK_CUSPARSE(cusparseSpMV_bufferSize(
       handle, CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, matA, vecX, &beta, vecY,
-      CUDA_R_32F, CUSPARSE_MV_ALG_DEFAULT, &bufferSize))
-  CHECK_CUDA(cudaMalloc(&dBuffer, bufferSize))
+      CUDA_R_32F, CUSPARSE_MV_ALG_DEFAULT, &bufferSize));
+  CHECK_CUDA(cudaMalloc(&dBuffer, bufferSize));
 
   // execute SpMV
   gunrock::util::timer_t timer;
@@ -66,9 +66,10 @@ double spmv_cusparse(csr_t& A, vector_t& input, vector_t& output) {
   CHECK_CUSPARSE(cusparseDestroyDnVec(vecX))
   CHECK_CUSPARSE(cusparseDestroyDnVec(vecY))
   CHECK_CUSPARSE(cusparseDestroy(handle))
-  //--------------------------------------------------------------------------
-  // device memory deallocation
-  CHECK_CUDA(cudaFree(dBuffer))
 
-  return timer.milliseconds();  // TODO return the timer here
+  // device memory deallocation
+  CHECK_CUDA(cudaFree(dBuffer));
+
+
+  return timer.milliseconds();
 }
