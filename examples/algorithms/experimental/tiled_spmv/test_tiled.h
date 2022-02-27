@@ -376,8 +376,34 @@ using namespace memory;
 //   const bool debug;
 // };
 
-template <typename graph_t>
-__global__ void spmv_tiled_kernel() {}
+template <typename graph_t, typename vector_t>
+__global__ void spmv_tiled_kernel(graph_t graph,
+                                  vector_t* input,
+                                  vector_t* output) {
+  // Store the output in shared memory
+  using row_t = decltype(graph.get_row_offsets());
+  extern __shared__ row_t shmem[];
+
+  // TileIterator<int, float> iterator(
+  //     num_rows, num_cols, num_nonzeros, row_offsets, col_idx, nonzeros,
+  //     input, output, rows_per_block_tile, tile_col_size, shmem, lb_stats,
+  //     store_end_offsets_in_shmem, debug);
+
+  // iterator.process_all_tiles();
+
+  // Simple, single-threaded implementation
+  if (blockIdx.x == 0 && threadIdx.x == 0) {
+    for (auto i = 0; i < graph.get_number_of_rows(); i++) {
+      vector_t y = 0;
+      for (auto k = graph.get_row_offsets()[i];
+           k < graph.get_row_offsets()[i + 1]; k++) {
+        y = y + (graph.get_nonzero_values()[k] *
+                 input[graph.get_column_indices()[k]]);
+      }
+      output[i] = y;
+    }
+  }
+}
 
 // template <typename index_t = int, typename value_t = float>
 // __global__ void spmv_tiled_kernel(
@@ -429,6 +455,7 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
 
   // Need the types of the csr matrix for kernel setup
   using row_t = decltype(csr.row_offsets.data().get()[0]);
+  using nonzero_t = decltype(csr.nonzero_values.data().get()[0]);
 
   /* ========== Setup Device Properties ========== */
   auto device = 0;
@@ -464,15 +491,15 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   std::cout << "Rows Per Block: " << rows_per_block << std::endl;
   std::cout << "Shmem Per Block (bytes): " << shmemPerBlock << std::endl;
 
-  CHECK_CUDA(cudaFuncSetAttribute(spmv_tiled_kernel<decltype(G)>,
+  CHECK_CUDA(cudaFuncSetAttribute(spmv_tiled_kernel<decltype(G), float>,
                                   cudaFuncAttributeMaxDynamicSharedMemorySize,
                                   shmemPerBlock));
 
   // Need to know the max occupancy to determine how many blocks to launch
   // for the cooperative kernel. All blocks must be resident on SMs
   CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-      &numBlocksPerSm, spmv_tiled_kernel<decltype(G)>, numThreadsPerBlock,
-      shmemPerBlock))
+      &numBlocksPerSm, spmv_tiled_kernel<decltype(G), float>,
+      numThreadsPerBlock, shmemPerBlock))
 
   std::cout << "Max Active Blocks Per SM: " << numBlocksPerSm << std::endl;
 
@@ -511,45 +538,27 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
 
     // size is in bytes. Need to convert to elements
     tile_size = size / sizeof(row_t);
+  } else {
+    // Using Volta or below
+    printf(
+        "WARNING: L2 Cache Management available only for compute capabilities "
+        "> 8\n");
+
+    tile_size = (deviceProp.l2CacheSize / data_elems_per_row) / sizeof(row_t);
   }
-    else {
-      // Using Volta or below
-      printf(
-          "WARNING: L2 Cache Management available only for compute capabilities > 8\n");
 
-      tile_size =
-          (deviceProp.l2CacheSize / data_elems_per_row) / sizeof(row_t);
-    }
+  printf("Tile Size (elements): %d * %d, %d\n", rows_per_block, dimGrid.x,
+         tile_size);
 
-    printf("Tile Size (elements): %d * %d, %d\n", rows_per_block, dimGrid.x,
-           tile_size);
+  /* ========== Execute SPMV ========== */
+  gunrock::util::timer_t timer;
+  timer.begin();
+  CHECK_CUDA(cudaLaunchCooperativeKernel(
+      (void*)spmv_tiled_kernel<decltype(G), float>, dimGrid, dimBlock,
+      kernelArgs, shmemPerBlock, stream));
 
-    // /* ========== Execute SPMV ========== */
-    // Timer t;
-    // t.start();
-    // CHECK_CUDA(cudaLaunchCooperativeKernel((void *)spmv_tiled_kernel<int,
-    // float>,
-    //                                        dimGrid, dimBlock, kernelArgs,
-    //                                        shmemPerBlock, stream))
+  CHECK_CUDA(cudaDeviceSynchronize());
+  timer.end();
 
-    // CHECK_CUDA(cudaDeviceSynchronize())
-    // t.stop();
-
-    // /* ========== RESET THE GPU ========== */
-
-    // if (deviceProp.major > 8)
-    // {
-    //   // Setting the window size to 0 disable it
-    //   stream_attribute.accessPolicyWindow.num_bytes = 0;
-
-    //   // Overwrite the access policy attribute to a CUDA Stream
-    //   CHECK_CUDA(cudaStreamSetAttribute(
-    //       stream, cudaStreamAttributeAccessPolicyWindow, &stream_attribute));
-
-    //   // Remove any persistent lines in L2
-    //   CHECK_CUDA(cudaCtxResetPersistingL2Cache());
-    // }
-
-    // return t.elapsed();
-    return 0;
-  }
+  return timer.milliseconds();
+}

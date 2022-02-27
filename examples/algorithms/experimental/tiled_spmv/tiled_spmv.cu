@@ -17,7 +17,7 @@ enum SPMV_t { MGPU, CUB, CUSPARSE, TILED };
 enum LB_t { THREAD_PER_ROW, WARP_PER_ROW, BLOCK_PER_ROW, MERGE_PATH };
 
 template <typename vector_t>
-void setup_ampere_cache(vector_t *pinned_mem) {
+void setup_ampere_cache(vector_t* pinned_mem) {
   // --
   // Set up cache configuration
   int device = 0;
@@ -242,6 +242,21 @@ void test_spmv(int num_arguments, char** argument_array) {
   printf("%s,%d,%d,%d,%f,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
          csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
          elapsed_cub, elapsed_mgpu, elapsed_tiled);
+
+  /* ========== RESET THE GPU ========== */
+
+  // if (deviceProp.major >= 8)
+  // {
+  //   // Setting the window size to 0 disable it
+  //   stream_attribute.accessPolicyWindow.num_bytes = 0;
+
+  //   // Overwrite the access policy attribute to a CUDA Stream
+  //   CHECK_CUDA(cudaStreamSetAttribute(
+  //       stream, cudaStreamAttributeAccessPolicyWindow, &stream_attribute));
+
+  //   // Remove any persistent lines in L2
+  //   CHECK_CUDA(cudaCtxResetPersistingL2Cache());
+  // }
 }
 
 int main(int argc, char** argv) {
