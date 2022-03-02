@@ -97,10 +97,6 @@ class TileIterator {
       queue_counter[0] = blockDim.x;
     }
 
-    // Override
-    num_row_tiles = 100;
-    num_col_tiles = 10;
-
     // Sync
     cg::grid_group grid = cg::this_grid();
     grid.sync();
@@ -134,7 +130,6 @@ class TileIterator {
     __syncthreads();
 
     cur_tile_row_idx = shared_cur_tile_row_idx;
-
   }
 
   __device__ __forceinline__ void process_gpu_col_tile() {
@@ -202,10 +197,6 @@ class TileIterator {
   size_t cur_tile_col_idx;
   size_t num_row_tiles;
   size_t num_col_tiles;
-
-  // shmem
-  shmem_t* local_row_offsets_start;
-  shmem_t* local_row_offsets_end;
 };
 
 template <typename graph_t, typename vector_t>
