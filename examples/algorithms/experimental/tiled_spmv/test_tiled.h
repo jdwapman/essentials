@@ -123,6 +123,7 @@ class TileIterator {
     // Note that this needs to be to a GLOBAL variable so that all blocks
     // can see it.
 
+    // TODO will need to change this to use the externally-added shmem
     __shared__ int shared_cur_tile_row_idx;
 
     if (threadIdx.x == 0) {
@@ -134,8 +135,6 @@ class TileIterator {
 
     cur_tile_row_idx = shared_cur_tile_row_idx;
 
-    print_block("Block %d: Got next row tile %d\n", blockIdx.x,
-                (int)cur_tile_row_idx);
   }
 
   __device__ __forceinline__ void process_gpu_col_tile() {
@@ -169,7 +168,6 @@ class TileIterator {
 
     if (blockIdx.x == 0 && threadIdx.x == 0) {
       queue_counter[0] = gridDim.x;
-      printf("Setting queue counter to %d\n", (int)queue_counter[0]);
     }
 
     print_device("Starting column tile %d\n", (int)cur_tile_col_idx);
