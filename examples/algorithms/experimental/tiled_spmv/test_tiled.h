@@ -38,45 +38,110 @@ using namespace memory;
 //   return global_idx;
 // }
 
+#define print_device(fmt, ...)                   \
+  {                                              \
+    if (true) {                                  \
+      if (blockIdx.x == 0 && threadIdx.x == 0) { \
+        printf(fmt, __VA_ARGS__);                \
+      }                                          \
+      cg::grid_group grid = cg::this_grid();     \
+      grid.sync();                               \
+    }                                            \
+  }
+
+#define print_block(fmt, ...)     \
+  {                               \
+    if (true) {                   \
+      if (threadIdx.x == 0) {     \
+        printf(fmt, __VA_ARGS__); \
+      }                           \
+      __syncthreads();            \
+    }                             \
+  }
+
 template <typename graph_t, typename vector_t, typename shmem_t>
 class TileIterator {
  public:
   __device__ TileIterator(const graph_t _graph,
                           const vector_t* _input,
                           vector_t* _output,
+                          int* _queue_counter,
                           const size_t _tile_row_size,
                           const size_t _tile_col_size,
                           shmem_t* _shmem)
       : graph(_graph),
         input(_input),
         output(_output),
+        queue_counter(_queue_counter),
         tile_row_size(_tile_row_size),
         tile_col_size(_tile_col_size),
         shmem(_shmem) {
     cur_tile_col_idx = 0;
     cur_tile_row_idx = blockIdx.x;
+
+    num_row_tiles = graph.get_number_of_rows() / tile_row_size;
+
+    // Handle the remainder
+    if (graph.get_number_of_rows() % tile_row_size != 0) {
+      num_row_tiles++;
+    }
+
+    num_col_tiles = graph.get_number_of_columns() / tile_col_size;
+
+    if (graph.get_number_of_columns() % tile_col_size != 0) {
+      num_col_tiles++;
+    }
+
+    // Reset the row tile queue counter
+    if (blockIdx.x == 0 && threadIdx.x == 0) {
+      queue_counter[0] = blockDim.x;
+    }
+
+    // Override
+    num_row_tiles = 100;
+    num_col_tiles = 10;
+
+    // Sync
+    cg::grid_group grid = cg::this_grid();
+    grid.sync();
   }
 
-  __device__ __forceinline__ bool all_columns_finished() { return false; }
+  __device__ __forceinline__ bool all_columns_finished() {
+    if (cur_tile_col_idx >= num_col_tiles) {
+      return true;
+    }
 
-  __device__ __forceinline__ void load_block_row_tile_metadata() {}
+    return false;
+  }
 
-  __device__ __forceinline__ void lb_block_row_tile() {}
-
-  __device__ __forceinline__ void process_block_row_tile() {}
-
-  __device__ __forceinline__ void unload_block_row_tile_metadata() {}
+  __device__ __forceinline__ void process_block_row_tile() {
+    print_block(" - Processing block row tile %d\n", (int)cur_tile_row_idx);
+  }
 
   __device__ __forceinline__ void get_next_block_row_tile() {
     // Atomically increment the current tile row index
     // Note that this needs to be to a GLOBAL variable so that all blocks
     // can see it.
+
+    __shared__ int shared_cur_tile_row_idx;
+
+    if (threadIdx.x == 0) {
+      cur_tile_row_idx = atomicAdd(&queue_counter[0], 1);
+      shared_cur_tile_row_idx = cur_tile_row_idx;
+    }
+
+    __syncthreads();
+
+    cur_tile_row_idx = shared_cur_tile_row_idx;
+
+    print_block("Block %d: Got next row tile %d\n", blockIdx.x,
+                (int)cur_tile_row_idx);
   }
 
-  __device__ __forceinline__ void process_gpu_row_tile() {
-    // Within a block, process the current tile
+  __device__ __forceinline__ void process_gpu_col_tile() {
+    // Iterate over the row tiles as long as it's in bounds.
 
-    // Iterate over the tiles as long as it's in bounds.
+    print_device("Processing GPU col tile %d\n", (int)cur_tile_col_idx);
 
     // The GPU has its tile row index and col index. Need to first load in
     // metadata, then do the load balancing, then do the computation, then
@@ -86,28 +151,9 @@ class TileIterator {
 
     // Then do a grid-wide synchronization.
 
-    auto num_row_tiles = graph.get_number_of_rows() / tile_row_size;
-
-    // Handle the remainder
-    if (graph.get_number_of_rows() % tile_row_size != 0) {
-      num_row_tiles++;
-    }
-
     // All blocks iterate over the row tiles
     while (cur_tile_row_idx < num_row_tiles) {
-      // Load metadata
-      load_block_row_tile_metadata();
-
-      // Load balancing
-      lb_block_row_tile();
-
-      // Compute
       process_block_row_tile();
-
-      // Unload metadata
-      unload_block_row_tile_metadata();
-
-      // Increment atomic
       get_next_block_row_tile();
     }
 
@@ -116,18 +162,29 @@ class TileIterator {
     grid.sync();
   }
 
-  __device__ __forceinline__ void get_next_gpu_row_tile() {
+  __device__ __forceinline__ void get_next_gpu_col_tile() {
     // Reset the tile metadata
     cur_tile_row_idx = blockIdx.x;
     cur_tile_col_idx += 1;
+
+    if (blockIdx.x == 0 && threadIdx.x == 0) {
+      queue_counter[0] = gridDim.x;
+      printf("Setting queue counter to %d\n", (int)queue_counter[0]);
+    }
+
+    print_device("Starting column tile %d\n", (int)cur_tile_col_idx);
+
+    // Sync
+    cg::grid_group grid = cg::this_grid();
+    grid.sync();
 
     // TODO do something to reset the caching here?
   }
 
   __device__ __forceinline__ void process_all_tiles() {
     while (!all_columns_finished()) {
-      process_gpu_row_tile();
-      get_next_gpu_row_tile();
+      process_gpu_col_tile();
+      get_next_gpu_col_tile();
     }
   }
 
@@ -137,6 +194,7 @@ class TileIterator {
   const vector_t* input;
   vector_t* output;
   shmem_t* shmem;
+  int* queue_counter;
 
   // Tiling metadata
   const size_t tile_row_size;
@@ -144,6 +202,8 @@ class TileIterator {
 
   size_t cur_tile_row_idx;
   size_t cur_tile_col_idx;
+  size_t num_row_tiles;
+  size_t num_col_tiles;
 
   // shmem
   shmem_t* local_row_offsets_start;
@@ -154,6 +214,7 @@ template <typename graph_t, typename vector_t>
 __global__ void spmv_tiled_kernel(graph_t graph,
                                   vector_t* input,
                                   vector_t* output,
+                                  int* queue_counter,
                                   size_t tile_row_size,
                                   size_t tile_col_size) {
   // Store the output in shared memory
@@ -161,7 +222,7 @@ __global__ void spmv_tiled_kernel(graph_t graph,
   extern __shared__ row_t shmem[];
 
   TileIterator<graph_t, vector_t, row_t> iterator(
-      graph, input, output, tile_row_size, tile_col_size, shmem);
+      graph, input, output, queue_counter, tile_row_size, tile_col_size, shmem);
 
   iterator.process_all_tiles();
 
@@ -211,7 +272,7 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   auto numThreadsPerBlock = 0;
   auto shmemPerBlock = 0;  // bytes
 
-  auto target_occupancy = 1;
+  auto target_occupancy = 2;
 
   // Number of coordinates. TODO calculate this
   // based on architecture L2 properties
@@ -253,8 +314,13 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   /* ========== Setup Kernel Call ========== */
   void* input_ptr = thrust::raw_pointer_cast(input.data());
   void* output_ptr = thrust::raw_pointer_cast(output.data());
-  void* kernelArgs[] = {&G, &input_ptr, &output_ptr, &rows_per_block,
-                        &tile_size};
+
+  auto queue_counter = thrust::device_vector<int>(1);
+  void* queue_counter_ptr = thrust::raw_pointer_cast(queue_counter.data());
+
+  void* kernelArgs[] = {
+      &G,        &input_ptr, &output_ptr, &queue_counter_ptr, &rows_per_block,
+      &tile_size};
 
   /* ========== SETUP TILE SIZE ========== */
   cudaStream_t stream;
@@ -271,17 +337,26 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
 
     // size is in bytes. Need to convert to elements
     tile_size = size / sizeof(row_t);
+
+    printf("Device has cache size of %d bytes\n", (int)size);
+    printf("Data elems per row: %d\n", (int)data_elems_per_row);
+    printf("Data size: %ld\n", sizeof(row_t));
+
   } else {
     // Using Volta or below
     printf(
         "WARNING: L2 Cache Management available only for compute capabilities "
         "> 8\n");
 
+    printf("Device has cache size of %d bytes\n", deviceProp.l2CacheSize);
+    printf("Data elems per row: %d\n", data_elems_per_row);
+    printf("Data size: %ld\n", sizeof(row_t));
+
     tile_size = (deviceProp.l2CacheSize / data_elems_per_row) / sizeof(row_t);
   }
 
-  printf("Tile Size (elements): %d * %d, %d\n", rows_per_block, dimGrid.x,
-         tile_size);
+  printf("Tile Size (elements): %d * %d, %d\n", (int)rows_per_block, (int)dimGrid.x,
+         (int)tile_size);
 
   /* ========== Execute SPMV ========== */
   gunrock::util::timer_t timer;

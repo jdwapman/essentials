@@ -211,6 +211,8 @@ void test_spmv(int num_arguments, char** argument_array) {
   }
 
   printf("Matrix: %s\n", filename.c_str());
+  printf("- Rows: %d\n", csr.number_of_rows);
+  printf("- Nonzeros: %d\n", csr.number_of_nonzeros);
 
   thrust::host_vector<nonzero_t> x_host(csr.number_of_columns);
 
