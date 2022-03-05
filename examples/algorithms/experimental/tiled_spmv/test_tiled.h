@@ -4,6 +4,7 @@
 #include <cuda_runtime_api.h>
 
 #include "spmv_utils.cuh"
+#include "load_balancer.cuh"
 
 namespace cg = cooperative_groups;
 
@@ -68,14 +69,16 @@ class TileIterator {
                           int* _queue_counter,
                           const size_t _tile_row_size,
                           const size_t _tile_col_size,
-                          shmem_t* _shmem)
+                          shmem_t* _shmem,
+                          const size_t _shmem_size)
       : graph(_graph),
         input(_input),
         output(_output),
         queue_counter(_queue_counter),
         tile_row_size(_tile_row_size),
         tile_col_size(_tile_col_size),
-        shmem(_shmem) {
+        shmem(_shmem),
+        shmem_size(_shmem_size) {
     cur_tile_col_idx = 0;
     cur_tile_row_idx = blockIdx.x;
 
@@ -91,6 +94,20 @@ class TileIterator {
     if (graph.get_number_of_columns() % tile_col_size != 0) {
       num_col_tiles++;
     }
+
+    // Setup a piece of memory for the block to to communicate which row it's
+    // working on
+    extern __shared__ shmem_t shared_temp[];
+
+    block_temp = shared_temp;  // Size of 1
+
+    // Update the shared memory
+    shmem = (shmem_t*)&shared_temp[1];
+    shmem_size -= sizeof(shmem_t);
+
+    // TODO recompute tile size based on remaining shmem
+
+    print_device("Remaining shmem size: %d\n", shmem_size);
 
     // Reset the row tile queue counter
     if (blockIdx.x == 0 && threadIdx.x == 0) {
@@ -187,11 +204,13 @@ class TileIterator {
   const vector_t* input;
   vector_t* output;
   shmem_t* shmem;
+  size_t shmem_size;
   int* queue_counter;
 
   // Tiling metadata
   const size_t tile_row_size;
   const size_t tile_col_size;
+  shmem_t* block_temp;  // In shared memory
 
   size_t cur_tile_row_idx;
   size_t cur_tile_col_idx;
@@ -205,13 +224,15 @@ __global__ void spmv_tiled_kernel(graph_t graph,
                                   vector_t* output,
                                   int* queue_counter,
                                   size_t tile_row_size,
-                                  size_t tile_col_size) {
+                                  size_t tile_col_size,
+                                  size_t shmem_size) {
   // Store the output in shared memory
   using row_t = decltype(graph.get_row_offsets());
   extern __shared__ row_t shmem[];
 
   TileIterator<graph_t, vector_t, row_t> iterator(
-      graph, input, output, queue_counter, tile_row_size, tile_col_size, shmem);
+      graph, input, output, queue_counter, tile_row_size, tile_col_size, shmem,
+      shmem_size);
 
   iterator.process_all_tiles();
 
@@ -307,9 +328,13 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   auto queue_counter = thrust::device_vector<int>(1);
   void* queue_counter_ptr = thrust::raw_pointer_cast(queue_counter.data());
 
-  void* kernelArgs[] = {
-      &G,        &input_ptr, &output_ptr, &queue_counter_ptr, &rows_per_block,
-      &tile_size};
+  void* kernelArgs[] = {&G,
+                        &input_ptr,
+                        &output_ptr,
+                        &queue_counter_ptr,
+                        &rows_per_block,
+                        &tile_size,
+                        &shmemPerBlock};
 
   /* ========== SETUP TILE SIZE ========== */
   cudaStream_t stream;
@@ -344,8 +369,8 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
     tile_size = (deviceProp.l2CacheSize / data_elems_per_row) / sizeof(row_t);
   }
 
-  printf("Tile Size (elements): %d * %d, %d\n", (int)rows_per_block, (int)dimGrid.x,
-         (int)tile_size);
+  printf("Tile Size (elements): %d * %d, %d\n", (int)rows_per_block,
+         (int)dimGrid.x, (int)tile_size);
 
   /* ========== Execute SPMV ========== */
   gunrock::util::timer_t timer;
