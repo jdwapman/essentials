@@ -29,9 +29,16 @@ __global__ void spmv_tiled_kernel(graph_t graph,
   using row_t = typename graph_t::vertex_type;
   extern __shared__ row_t shmem[];
 
-  MatrixTileIterator<graph_t, vector_t, row_t, TILE_MATRIX>
+  // Set up the tiles
+  TileIndexer<4> tile_indexer(ROWMAJOR);
+
+  tile_indexer.add_tile_info(0, graph.get_number_of_rows(),
+                             graph.get_number_of_columns());
+  tile_indexer.add_tile_info(1, tile_row_size, graph.get_number_of_columns());
+
+  MatrixTileIterator<graph_t, vector_t, row_t, TileIndexer<4>, TILE_MATRIX>
       matrix_tile_iterator(graph, input, output, tile_row_size, tile_col_size,
-                           shmem, shmem_size);
+                           shmem, shmem_size, tile_indexer);
 
   matrix_tile_iterator.process_all_tiles();
 
