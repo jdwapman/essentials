@@ -15,6 +15,27 @@ namespace cg = cooperative_groups;
     }                                                                      \
   }
 
+#define print_device(fmt, ...)                   \
+  {                                              \
+    if (true) {                                  \
+      if (blockIdx.x == 0 && threadIdx.x == 0) { \
+        printf(fmt, __VA_ARGS__);                \
+      }                                          \
+      cg::grid_group grid = cg::this_grid();     \
+      grid.sync();                               \
+    }                                            \
+  }
+
+#define print_block(fmt, ...)     \
+  {                               \
+    if (true) {                   \
+      if (threadIdx.x == 0) {     \
+        printf(fmt, __VA_ARGS__); \
+      }                           \
+      __syncthreads();            \
+    }                             \
+  }
+
 template <typename vector_t>
 void display(vector_t v, std::string name, bool verbose = true) {
   if (verbose) {
@@ -45,7 +66,7 @@ void display(vector_t v, std::string name, bool verbose = true) {
 // to another tile
 template <size_t HIERARCHY_N>
 class TileIndexer {
-  public:
+ public:
   __device__ TileIndexer(const size_t _format) {
     // Init arrays to 0
     for (size_t i = 0; i < HIERARCHY_N; i++) {
@@ -60,6 +81,17 @@ class TileIndexer {
                                                 const size_t tile_cols) {
     tile_row_dim[hierarchy] = tile_rows;
     tile_col_dim[hierarchy] = tile_cols;
+
+    if (hierarchy >= 1) {
+      tile_row_dim[hierarchy] =
+          min(tile_row_dim[hierarchy], tile_row_dim[hierarchy - 1]);
+      tile_col_dim[hierarchy] =
+          min(tile_col_dim[hierarchy], tile_col_dim[hierarchy - 1]);
+    }
+
+    print_device("Tile (%d x %d) added to hierarchy %d\n",
+                 (int)tile_row_dim[hierarchy], (int)tile_col_dim[hierarchy],
+                 (int)hierarchy);
   }
 
   //   __device__ __forceinline__ size_t
@@ -176,24 +208,3 @@ class TileIndexer {
 
 //   return global_idx;
 // }
-
-#define print_device(fmt, ...)                   \
-  {                                              \
-    if (true) {                                  \
-      if (blockIdx.x == 0 && threadIdx.x == 0) { \
-        printf(fmt, __VA_ARGS__);                \
-      }                                          \
-      cg::grid_group grid = cg::this_grid();     \
-      grid.sync();                               \
-    }                                            \
-  }
-
-#define print_block(fmt, ...)     \
-  {                               \
-    if (true) {                   \
-      if (threadIdx.x == 0) {     \
-        printf(fmt, __VA_ARGS__); \
-      }                           \
-      __syncthreads();            \
-    }                             \
-  }

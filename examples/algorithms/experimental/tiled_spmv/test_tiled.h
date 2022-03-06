@@ -11,10 +11,6 @@ namespace cg = cooperative_groups;
 using namespace gunrock;
 using namespace memory;
 
-#define TILE_MATRIX 0
-#define TILE_DEVICE 1
-#define TILE_BLOCK 2
-
 // The parent class for all tiled iteration
 
 template <typename graph_t, typename vector_t>
@@ -32,11 +28,23 @@ __global__ void spmv_tiled_kernel(graph_t graph,
   // Set up the tiles
   TileIndexer<4> tile_indexer(ROWMAJOR);
 
+  // NOTE: Need to be able to express this for either row dims or sub-tiles
+
+  // The matrix dimensions
   tile_indexer.add_tile_info(0, graph.get_number_of_rows(),
                              graph.get_number_of_columns());
-  tile_indexer.add_tile_info(1, tile_row_size, graph.get_number_of_columns());
 
-  MatrixTileIterator<graph_t, vector_t, row_t, TileIndexer<4>, TILE_MATRIX>
+  // The matrix-device-row dimensions
+  tile_indexer.add_tile_info(1, tile_row_size * blockDim.x,
+                             graph.get_number_of_columns());
+
+  // The device tile dimensions (all SMs working within the same column)
+  tile_indexer.add_tile_info(2, tile_row_size * blockDim.x, tile_col_size);
+
+  // The block tile dimensions
+  tile_indexer.add_tile_info(3, tile_row_size, tile_col_size);
+
+  MatrixTileIterator<graph_t, vector_t, row_t, TileIndexer<4>, 4>
       matrix_tile_iterator(graph, input, output, tile_row_size, tile_col_size,
                            shmem, shmem_size, tile_indexer);
 
