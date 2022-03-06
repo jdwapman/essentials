@@ -4,219 +4,18 @@
 #include <cuda_runtime_api.h>
 
 #include "spmv_utils.cuh"
-#include "load_balancer.cuh"
+#include "tile_iterator.cuh"
 
 namespace cg = cooperative_groups;
 
 using namespace gunrock;
 using namespace memory;
 
-// template <typename index_t>
-// __device__ __forceinline__ index_t global2tile(const index_t &global_idx,
-//                                                const index_t &tile_size)
-// {
-//   // Note that this function assumes a valid global index and does not
-//   attempt
-//   // to perform bounds checking for partial tiles
+#define TILE_MATRIX 0
+#define TILE_DEVICE 1
+#define TILE_BLOCK 2
 
-//   // Tile_index + offset_within_tile
-//   index_t local_idx = (global_idx / tile_size) + (global_idx % tile_size);
-
-//   return local_idx;
-// }
-
-// template <typename index_t>
-// __device__ __forceinline__ index_t tile2global(const index_t &local_idx,
-//                                                const index_t &tile_idx,
-//                                                const index_t &tile_size)
-// {
-//   // Note that this function does not attempt to perform bounds checking for
-//   the
-//   // final tile
-
-//   index_t global_idx = local_idx + (tile_idx * tile_size);
-
-//   return global_idx;
-// }
-
-#define print_device(fmt, ...)                   \
-  {                                              \
-    if (true) {                                  \
-      if (blockIdx.x == 0 && threadIdx.x == 0) { \
-        printf(fmt, __VA_ARGS__);                \
-      }                                          \
-      cg::grid_group grid = cg::this_grid();     \
-      grid.sync();                               \
-    }                                            \
-  }
-
-#define print_block(fmt, ...)     \
-  {                               \
-    if (true) {                   \
-      if (threadIdx.x == 0) {     \
-        printf(fmt, __VA_ARGS__); \
-      }                           \
-      __syncthreads();            \
-    }                             \
-  }
-
-template <typename graph_t, typename vector_t, typename shmem_t>
-class TileIterator {
- public:
-  __device__ TileIterator(const graph_t _graph,
-                          const vector_t* _input,
-                          vector_t* _output,
-                          int* _queue_counter,
-                          const size_t _tile_row_size,
-                          const size_t _tile_col_size,
-                          shmem_t* _shmem,
-                          const size_t _shmem_size)
-      : graph(_graph),
-        input(_input),
-        output(_output),
-        queue_counter(_queue_counter),
-        tile_row_size(_tile_row_size),
-        tile_col_size(_tile_col_size),
-        shmem(_shmem),
-        shmem_size(_shmem_size) {
-    cur_tile_col_idx = 0;
-    cur_tile_row_idx = blockIdx.x;
-
-    num_row_tiles = graph.get_number_of_rows() / tile_row_size;
-
-    // Handle the remainder
-    if (graph.get_number_of_rows() % tile_row_size != 0) {
-      num_row_tiles++;
-    }
-
-    num_col_tiles = graph.get_number_of_columns() / tile_col_size;
-
-    if (graph.get_number_of_columns() % tile_col_size != 0) {
-      num_col_tiles++;
-    }
-
-    // Setup a piece of memory for the block to to communicate which row it's
-    // working on
-    extern __shared__ shmem_t shared_temp[];
-
-    block_temp = shared_temp;  // Size of 1
-
-    // Update the shared memory
-    shmem = (shmem_t*)&shared_temp[1];
-    shmem_size -= sizeof(shmem_t);
-
-    // TODO recompute tile size based on remaining shmem
-
-    print_device("Remaining shmem size: %d\n", shmem_size);
-
-    // Reset the row tile queue counter
-    if (blockIdx.x == 0 && threadIdx.x == 0) {
-      queue_counter[0] = blockDim.x;
-    }
-
-    // Sync
-    cg::grid_group grid = cg::this_grid();
-    grid.sync();
-  }
-
-  __device__ __forceinline__ bool all_columns_finished() {
-    if (cur_tile_col_idx >= num_col_tiles) {
-      return true;
-    }
-
-    return false;
-  }
-
-  __device__ __forceinline__ void process_block_row_tile() {
-    print_block(" - Processing block row tile %d\n", (int)cur_tile_row_idx);
-  }
-
-  __device__ __forceinline__ void get_next_block_row_tile() {
-    // Atomically increment the current tile row index
-    // Note that this needs to be to a GLOBAL variable so that all blocks
-    // can see it.
-
-    // TODO will need to change this to use the externally-added shmem
-    __shared__ int shared_cur_tile_row_idx;
-
-    if (threadIdx.x == 0) {
-      cur_tile_row_idx = atomicAdd(&queue_counter[0], 1);
-      shared_cur_tile_row_idx = cur_tile_row_idx;
-    }
-
-    __syncthreads();
-
-    cur_tile_row_idx = shared_cur_tile_row_idx;
-  }
-
-  __device__ __forceinline__ void process_gpu_col_tile() {
-    // Iterate over the row tiles as long as it's in bounds.
-
-    print_device("Processing GPU col tile %d\n", (int)cur_tile_col_idx);
-
-    // The GPU has its tile row index and col index. Need to first load in
-    // metadata, then do the load balancing, then do the computation, then
-    // unload any metadata we need to save to global mem for the next time we
-    // come back to this row. Finally, need to increment an atomic and go on to
-    // the next row tile if there are more to process.
-
-    // Then do a grid-wide synchronization.
-
-    // All blocks iterate over the row tiles
-    while (cur_tile_row_idx < num_row_tiles) {
-      process_block_row_tile();
-      get_next_block_row_tile();
-    }
-
-    // Sync
-    cg::grid_group grid = cg::this_grid();
-    grid.sync();
-  }
-
-  __device__ __forceinline__ void get_next_gpu_col_tile() {
-    // Reset the tile metadata
-    cur_tile_row_idx = blockIdx.x;
-    cur_tile_col_idx += 1;
-
-    if (blockIdx.x == 0 && threadIdx.x == 0) {
-      queue_counter[0] = gridDim.x;
-    }
-
-    print_device("Starting column tile %d\n", (int)cur_tile_col_idx);
-
-    // Sync
-    cg::grid_group grid = cg::this_grid();
-    grid.sync();
-
-    // TODO do something to reset the caching here?
-  }
-
-  __device__ __forceinline__ void process_all_tiles() {
-    while (!all_columns_finished()) {
-      process_gpu_col_tile();
-      get_next_gpu_col_tile();
-    }
-  }
-
- private:
-  // Store the inputs and outputs
-  const graph_t graph;
-  const vector_t* input;
-  vector_t* output;
-  shmem_t* shmem;
-  size_t shmem_size;
-  int* queue_counter;
-
-  // Tiling metadata
-  const size_t tile_row_size;
-  const size_t tile_col_size;
-  shmem_t* block_temp;  // In shared memory
-
-  size_t cur_tile_row_idx;
-  size_t cur_tile_col_idx;
-  size_t num_row_tiles;
-  size_t num_col_tiles;
-};
+// The parent class for all tiled iteration
 
 template <typename graph_t, typename vector_t>
 __global__ void spmv_tiled_kernel(graph_t graph,
@@ -227,14 +26,14 @@ __global__ void spmv_tiled_kernel(graph_t graph,
                                   size_t tile_col_size,
                                   size_t shmem_size) {
   // Store the output in shared memory
-  using row_t = decltype(graph.get_row_offsets());
+  using row_t = typename graph_t::vertex_type;
   extern __shared__ row_t shmem[];
 
-  TileIterator<graph_t, vector_t, row_t> iterator(
-      graph, input, output, queue_counter, tile_row_size, tile_col_size, shmem,
-      shmem_size);
+  MatrixTileIterator<graph_t, vector_t, row_t, TILE_MATRIX>
+      matrix_tile_iterator(graph, input, output, tile_row_size, tile_col_size,
+                           shmem, shmem_size);
 
-  iterator.process_all_tiles();
+  matrix_tile_iterator.process_all_tiles();
 
   // Simple, single-threaded implementation
   if (blockIdx.x == 0 && threadIdx.x == 0) {
