@@ -11,15 +11,15 @@ struct Point {
 struct TileIdx {
   size_t row;
   size_t col;
-  const size_t h;
+  size_t h;
   TileIdx* parent;
 
-  __device__ TileIdx() : row(0), col(0), h(0), parent(nullptr) {}
+  __device__ TileIdx() : row(0), col(0), h(0), parent(NULL) {}
   __device__ TileIdx(size_t _row, size_t _col, TileIdx* _parent)
       : row(_row), col(_col), h(_parent->h + 1), parent(_parent) {}
 
-  __device__ TileIdx(size_t _row, size_t _col, const size_t _h)
-      : row(_row), col(_col), h(_h), parent(nullptr) {}
+  __device__ TileIdx(size_t _row, size_t _col, size_t _h)
+      : row(_row), col(_col), h(_h), parent(NULL) {}
 };
 
 #define ROWMAJOR 0
@@ -90,7 +90,8 @@ template <size_t HIERARCHY_N>
 class TileIndexer {
  public:
   __device__ TileIndexer(const size_t _format) {
-    // Init arrays to 0
+// Init arrays to 0
+#pragma unroll
     for (size_t i = 0; i < HIERARCHY_N; i++) {
       tile_row_dim[i] = 0;
       tile_col_dim[i] = 0;
@@ -110,15 +111,6 @@ class TileIndexer {
       tile_col_dim[hierarchy] =
           min(tile_col_dim[hierarchy], tile_col_dim[hierarchy - 1]);
     }
-
-    // print_device("Tile (%d x %d) added to hierarchy %d\n",
-    //              (int)tile_row_dim[hierarchy], (int)tile_col_dim[hierarchy],
-    //              (int)hierarchy);
-    // if (blockIdx.x == 0 && threadIdx.x == 0) {
-    //   printf("Tile (%d x %d) added to hierarchy %d\n",
-    //          (int)tile_row_dim[hierarchy], (int)tile_col_dim[hierarchy],
-    //          (int)hierarchy);
-    // }
   }
 
   // Number of rows in the tile given by idx
@@ -139,8 +131,7 @@ class TileIndexer {
       return 1;
     }
 
-    size_t num = 0;
-    num = tile_row_dim[h - 1] / tile_row_dim[h];
+    size_t num = tile_row_dim[h - 1] / tile_row_dim[h];
 
     if (tile_row_dim[h - 1] % tile_row_dim[h] != 0) {
       num++;
@@ -160,8 +151,7 @@ class TileIndexer {
       return 1;
     }
 
-    size_t num = 0;
-    num = tile_col_dim[h - 1] / tile_col_dim[h];
+    size_t num = tile_col_dim[h - 1] / tile_col_dim[h];
 
     if (tile_col_dim[h - 1] % tile_col_dim[h] != 0) {
       num++;
@@ -208,33 +198,42 @@ class TileIndexer {
   __device__ __forceinline__ Point convert_index(Point _point,
                                                  TileIdx* _idx,
                                                  size_t _goal_h) {
-    printf("Converting index %d,%d,%d to %d,%d\n", (int)_point.row,
-           (int)_point.col, (int)_idx->h, (int)_idx->row, (int)_idx->col);
-    // Recursive implementation.
-    if (_goal_h == _idx->h) {
-      return _point;
-    } else if (_goal_h < _idx->h) {
-      // Going to a larger level of the hierarchy
-      // We have the current point and the current tile index. Want to go
-      // from the index in a smaller tile to the index in a larger tile
-      Point larger_point(0, 0);
-      larger_point.row = _point.row + _idx->row * rows_in_tile(*_idx);
-      larger_point.col = _point.col + _idx->col * cols_in_tile(*_idx);
+    // CONVERT TO ITERATIVE
+    Point point = _point;
+    TileIdx* idx = _idx;
+    size_t goal_h = _goal_h;
 
-      // Create a new TileIdx for the larger tile
-      return convert_index(larger_point, _idx->parent, _goal_h);
+    TileIdx temp_idx;
 
-    } else if (_goal_h > _idx->h) {
-      // Going to a smaller level of the hierarchy
-      TileIdx smaller_idx(_point.row / num_child_tiles_row(*_idx),
-                          _point.col / num_child_tiles_col(*_idx), _idx);
-      Point smaller_point(_point.row % num_child_tiles_row(*_idx),
-                          _point.col % num_child_tiles_col(*_idx));
-      return convert_index(smaller_point, &smaller_idx, _goal_h);
-      printf("WRONG CODE LOCATION\n");
-    } else {
-      printf("ERROR\n");
+    while (idx->h != goal_h) {
+      // Recursive implementation.
+      if (goal_h < idx->h) {
+        // Go from a small tile to a large tile
+        Point larger_point(point.row + idx->row * tile_row_dim[idx->h],
+                           point.col + idx->col * tile_col_dim[idx->h]);
+
+        point = larger_point;
+        idx = idx->parent;
+
+      } else if (goal_h > idx->h) {
+        // Go from a large tile to a small tile
+        // Calculate the point in the immediately smaller tile
+        Point smaller_point(point.row % tile_row_dim[idx->h + 1],
+                            point.col % tile_col_dim[idx->h + 1]);
+
+        temp_idx.row = point.row / tile_row_dim[idx->h + 1];
+        temp_idx.col = point.col / tile_col_dim[idx->h + 1];
+        temp_idx.h = idx->h + 1;
+        temp_idx.parent = NULL;
+
+        point = smaller_point;
+        idx = &temp_idx;
+      } else {
+        printf("ERROR\n");
+      }
     }
+
+    return point;
   }
 
   // Create arrays here to hold information about tile

@@ -5,24 +5,62 @@
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 
-__global__ void small_to_large_kernel(int* row, int* col) {
+__global__ void large_to_small_kernel(int* row, int* col) {
   TileIndexer<4> tile_indexer(ROWMAJOR);
 
   tile_indexer.add_tile_info(0, 1000, 1000);
   tile_indexer.add_tile_info(1, 100, 100);
   tile_indexer.add_tile_info(2, 10, 10);
+  tile_indexer.add_tile_info(3, 5, 5);
 
-  Point pt(4, 5);
+  Point pt(405, 871);
 
   // Set up the tile info
   TileIdx top;
-  TileIdx middle(2, 2, &top);
-  TileIdx bottom(3, 3, &middle);
 
-  Point new_point = tile_indexer.convert_index(pt, &bottom, 0);
+  Point new_point_0 = tile_indexer.convert_index(pt, &top, 0);
+  Point new_point_1 = tile_indexer.convert_index(pt, &top, 1);
+  Point new_point_2 = tile_indexer.convert_index(pt, &top, 2);
+  Point new_point_3 = tile_indexer.convert_index(pt, &top, 3);
 
-  row[0] = new_point.row;
-  col[0] = new_point.col;
+  row[0] = new_point_0.row;
+  col[0] = new_point_0.col;
+  row[1] = new_point_1.row;
+  col[1] = new_point_1.col;
+  row[2] = new_point_2.row;
+  col[2] = new_point_2.col;
+  row[3] = new_point_3.row;
+  col[3] = new_point_3.col;
+}
+
+__global__ void small_to_large_kernel(int* row, int* col) {
+  TileIndexer<4> tile_indexer(ROWMAJOR);
+
+  tile_indexer.add_tile_info(0, 10000, 10000);
+  tile_indexer.add_tile_info(1, 1000, 1000);
+  tile_indexer.add_tile_info(2, 100, 100);
+  tile_indexer.add_tile_info(3, 10, 10);
+
+  TileIdx t0;
+  TileIdx t1(3, 4, &t0);
+  TileIdx t2(2, 3, &t1);
+  TileIdx t3(1, 2, &t2);
+
+  Point pt(5, 6);
+
+  Point pt_0 = tile_indexer.convert_index(pt, &t0, 0);
+  Point pt_1 = tile_indexer.convert_index(pt, &t1, 0);
+  Point pt_2 = tile_indexer.convert_index(pt, &t2, 0);
+  Point pt_3 = tile_indexer.convert_index(pt, &t3, 0);
+
+  row[0] = pt_0.row;
+  col[0] = pt_0.col;
+  row[1] = pt_1.row;
+  col[1] = pt_1.col;
+  row[2] = pt_2.row;
+  col[2] = pt_2.col;
+  row[3] = pt_3.row;
+  col[3] = pt_3.col;
 }
 
 __global__ void tile_test(int* success) {
@@ -97,21 +135,53 @@ __global__ void tile_test(int* success) {
   }
 }
 
-// TEST(IndexConverterTest, SmallToLargeTest) {
-//   // Set up cuda vectors
-//   thrust::device_vector<int> row_d(1);
-//   thrust::device_vector<int> col_d(1);
+TEST(IndexConverterTest, LargeToSmallTest) {
+  // Set up cuda vectors
+  thrust::device_vector<int> row_d(4);
+  thrust::device_vector<int> col_d(4);
 
-//   // Run kernel
-//   small_to_large_kernel<<<1, 1>>>(row_d.data().get(), col_d.data().get());
+  // Run kernel
+  large_to_small_kernel<<<1, 1>>>(row_d.data().get(), col_d.data().get());
 
-//   // Synchronize
-//   CHECK_CUDA(cudaDeviceSynchronize());
+  // Synchronize
+  CHECK_CUDA(cudaDeviceSynchronize());
 
-//   // Google test assert row == 101, col == 101
-//   ASSERT_EQ(row_d[0], 234);
-//   ASSERT_EQ(col_d[0], 235);
-// }
+  ASSERT_EQ(row_d[0], 405);
+  ASSERT_EQ(col_d[0], 871);
+
+  ASSERT_EQ(row_d[1], 5);
+  ASSERT_EQ(col_d[1], 71);
+
+  ASSERT_EQ(row_d[2], 5);
+  ASSERT_EQ(col_d[2], 1);
+
+  ASSERT_EQ(row_d[3], 0);
+  ASSERT_EQ(col_d[3], 1);
+}
+
+TEST(IndexConverterTest, SmallToLargeTest) {
+  // Set up cuda vectors
+  thrust::device_vector<int> row_d(4);
+  thrust::device_vector<int> col_d(4);
+
+  // Run kernel
+  small_to_large_kernel<<<1, 1>>>(row_d.data().get(), col_d.data().get());
+
+  // Synchronize
+  CHECK_CUDA(cudaDeviceSynchronize());
+
+  ASSERT_EQ(row_d[0], 5);
+  ASSERT_EQ(col_d[0], 6);
+
+  ASSERT_EQ(row_d[1], 3005);
+  ASSERT_EQ(col_d[1], 4006);
+
+  ASSERT_EQ(row_d[2], 3205);
+  ASSERT_EQ(col_d[2], 4306);
+
+  ASSERT_EQ(row_d[3], 3215);
+  ASSERT_EQ(col_d[3], 4326);
+}
 
 TEST(TileSetupTest, SetupTest) {
   // Set up cuda vectors
