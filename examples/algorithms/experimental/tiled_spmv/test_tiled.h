@@ -31,18 +31,19 @@ __global__ void spmv_tiled_kernel(graph_t graph,
   // NOTE: Need to be able to express this for either row dims or sub-tiles
 
   // The matrix dimensions
-  tile_indexer.add_tile_info(0, graph.get_number_of_rows(),
+  tile_indexer.add_tile_info(TILE_MATRIX, graph.get_number_of_rows(),
                              graph.get_number_of_columns());
 
-  // The matrix-device-row dimensions
-  tile_indexer.add_tile_info(1, tile_row_size * blockDim.x,
+  // The device batch tile dimensions
+  tile_indexer.add_tile_info(TILE_DEVICE_BATCH, tile_row_size * blockDim.x,
                              graph.get_number_of_columns());
 
   // The device tile dimensions (all SMs working within the same column)
-  tile_indexer.add_tile_info(2, tile_row_size * blockDim.x, tile_col_size);
+  tile_indexer.add_tile_info(TILE_DEVICE, tile_row_size * blockDim.x,
+                             tile_col_size);
 
   // The block tile dimensions
-  tile_indexer.add_tile_info(3, tile_row_size, tile_col_size);
+  tile_indexer.add_tile_info(TILE_BLOCK, tile_row_size, tile_col_size);
 
   MatrixTileIterator<graph_t, vector_t, row_t, TileIndexer<4>, 4>
       matrix_tile_iterator(graph, input, output, tile_row_size, tile_col_size,
