@@ -40,3 +40,5 @@
 
 // #include "io/matrix_market.cuh"
 // #include "io/mtxbin.cuh"
+
+#include "../examples/algorithms/experimental/tiled_spmv/tests.cuh"

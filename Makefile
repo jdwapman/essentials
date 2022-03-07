@@ -15,12 +15,12 @@ debug:
 	$(MAKE) -C ./build_debug
 
 test: release
-	./build_release/bin/tests_main
+	./build_release/bin/unittests
 
 test_release: test
 
 test_debug: debug
-	./build_debug/bin/tests_main
+	./build_debug/bin/unittests
 
 clean:
 	rm -rf build_debug

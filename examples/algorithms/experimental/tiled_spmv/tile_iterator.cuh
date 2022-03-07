@@ -2,14 +2,20 @@
 
 #include "spmv_utils.cuh"
 
+struct Point {
+  size_t row;
+  size_t col;
+  __device__ Point(size_t row, size_t col) : row(row), col(col) {}
+};
+
 struct TileIdx {
   size_t row;
   size_t col;
   const size_t h;
-  const TileIdx* parent;
+  TileIdx* parent;
 
   __device__ TileIdx() : row(0), col(0), h(0), parent(nullptr) {}
-  __device__ TileIdx(size_t _row, size_t _col, const TileIdx* _parent)
+  __device__ TileIdx(size_t _row, size_t _col, TileIdx* _parent)
       : row(_row), col(_col), h(_parent->h + 1), parent(_parent) {}
 
   __device__ TileIdx(size_t _row, size_t _col, const size_t _h)
@@ -23,7 +29,7 @@ struct TileIdx {
 #define TILE_DEVICE_BATCH 1
 #define TILE_DEVICE 2
 #define TILE_BLOCK 3
-#define TILE_THREAD 4
+#define TILE_ROW 4
 
 template <typename graph_t,
           typename vector_t,
@@ -49,7 +55,10 @@ class TileIterator {
         tile_col_size(_tile_col_size),
         shmem(_shmem),
         shmem_size(_shmem_size),
-        tile_indexer(_tile_indexer) {}
+        tile_indexer(_tile_indexer) {
+    shmem_row_offsets = shmem;
+    shmem_output = shmem + shmem_size / 2;
+  }
 
  public:
   const graph_t graph;
@@ -59,6 +68,9 @@ class TileIterator {
   const size_t tile_col_size;
   shmem_t* shmem;
   const size_t shmem_size;
+
+  shmem_t* shmem_row_offsets;
+  shmem_t* shmem_output;
 
   indexer_t tile_indexer;
 };
@@ -99,9 +111,14 @@ class TileIndexer {
           min(tile_col_dim[hierarchy], tile_col_dim[hierarchy - 1]);
     }
 
-    print_device("Tile (%d x %d) added to hierarchy %d\n",
-                 (int)tile_row_dim[hierarchy], (int)tile_col_dim[hierarchy],
-                 (int)hierarchy);
+    // print_device("Tile (%d x %d) added to hierarchy %d\n",
+    //              (int)tile_row_dim[hierarchy], (int)tile_col_dim[hierarchy],
+    //              (int)hierarchy);
+    // if (blockIdx.x == 0 && threadIdx.x == 0) {
+    //   printf("Tile (%d x %d) added to hierarchy %d\n",
+    //          (int)tile_row_dim[hierarchy], (int)tile_col_dim[hierarchy],
+    //          (int)hierarchy);
+    // }
   }
 
   // Number of rows in the tile given by idx
@@ -116,31 +133,110 @@ class TileIndexer {
 
   // Number of row tiles at the given level of the hierarchy, where idx is a
   // pointer to a tile in that hierarchy
-  __device__ __forceinline__ size_t num_row_tiles(const TileIdx idx) {
-    size_t num = 0;
-    num = tile_row_dim[idx.h] / tile_row_dim[idx.h + 1];
+  // TODO is this correct? Am I going the wrong way in the hierarchy?
+  __device__ __forceinline__ size_t num_row_tiles(const size_t h) {
+    if (h == 0) {
+      return 1;
+    }
 
-    if (tile_row_dim[idx.h] % tile_row_dim[idx.h + 1] != 0) {
+    size_t num = 0;
+    num = tile_row_dim[h - 1] / tile_row_dim[h];
+
+    if (tile_row_dim[h - 1] % tile_row_dim[h] != 0) {
       num++;
     }
 
     return num;
+  }
+
+  __device__ __forceinline__ size_t num_row_tiles(const TileIdx idx) {
+    return num_row_tiles(idx.h);
   }
 
   // Number of col tiles at the given level of the hierarchy, where idx
   // is a pointer to a tile in that hierarchy
-  __device__ __forceinline__ size_t num_col_tiles(const TileIdx idx) {
-    size_t num = 0;
-    num = tile_col_dim[idx.h] / tile_col_dim[idx.h + 1];
+  __device__ __forceinline__ size_t num_col_tiles(const size_t h) {
+    if (h == 0) {
+      return 1;
+    }
 
-    if (tile_col_dim[idx.h] % tile_col_dim[idx.h + 1] != 0) {
+    size_t num = 0;
+    num = tile_col_dim[h - 1] / tile_col_dim[h];
+
+    if (tile_col_dim[h - 1] % tile_col_dim[h] != 0) {
       num++;
     }
 
     return num;
   }
 
- private:
+  __device__ __forceinline__ size_t num_col_tiles(const TileIdx idx) {
+    return num_col_tiles(idx);
+  }
+
+  // Number of child tiles for a tile at the given level of the hierarchy, where
+  // idx is a pointer to a tile in that hierarchy
+  __device__ __forceinline__ size_t num_child_tiles_row(const size_t h) {
+    if (h == HIERARCHY_N - 1) {
+      return 1;
+    }
+
+    return tile_row_dim[h] / tile_row_dim[h + 1];
+  }
+
+  __device__ __forceinline__ size_t num_child_tiles_row(const TileIdx idx) {
+    return num_child_tiles_row(idx.h);
+  }
+
+  // Number of child tiles for a tile at the given level of the hierarchy, where
+  // idx is a pointer to a tile in that hierarchy
+  __device__ __forceinline__ size_t num_child_tiles_col(const size_t h) {
+    if (h == HIERARCHY_N - 1) {
+      return 1;
+    }
+
+    return tile_col_dim[h] / tile_col_dim[h + 1];
+  }
+
+  __device__ __forceinline__ size_t num_child_tiles_col(const TileIdx idx) {
+    return num_child_tiles_col(idx.h);
+  }
+
+  // Given a TileIdx struct with the tile's row, column, and level in the
+  // hierarchy, convert that to the row, column coordinates of the tile in the
+  // goal hierarchy
+  __device__ __forceinline__ Point convert_index(Point _point,
+                                                 TileIdx* _idx,
+                                                 size_t _goal_h) {
+    printf("Converting index %d,%d,%d to %d,%d\n", (int)_point.row,
+           (int)_point.col, (int)_idx->h, (int)_idx->row, (int)_idx->col);
+    // Recursive implementation.
+    if (_goal_h == _idx->h) {
+      return _point;
+    } else if (_goal_h < _idx->h) {
+      // Going to a larger level of the hierarchy
+      // We have the current point and the current tile index. Want to go
+      // from the index in a smaller tile to the index in a larger tile
+      Point larger_point(0, 0);
+      larger_point.row = _point.row + _idx->row * rows_in_tile(*_idx);
+      larger_point.col = _point.col + _idx->col * cols_in_tile(*_idx);
+
+      // Create a new TileIdx for the larger tile
+      return convert_index(larger_point, _idx->parent, _goal_h);
+
+    } else if (_goal_h > _idx->h) {
+      // Going to a smaller level of the hierarchy
+      TileIdx smaller_idx(_point.row / num_child_tiles_row(*_idx),
+                          _point.col / num_child_tiles_col(*_idx), _idx);
+      Point smaller_point(_point.row % num_child_tiles_row(*_idx),
+                          _point.col % num_child_tiles_col(*_idx));
+      return convert_index(smaller_point, &smaller_idx, _goal_h);
+      printf("WRONG CODE LOCATION\n");
+    } else {
+      printf("ERROR\n");
+    }
+  }
+
   // Create arrays here to hold information about tile
   size_t tile_row_dim[HIERARCHY_N + 1];
   size_t tile_col_dim[HIERARCHY_N + 1];
@@ -192,12 +288,14 @@ class MatrixTileIterator
 
     // Then iterate over the number of rows in the block
     // NOTE: Use ampere async copy
-    size_t size_to_copy = this->shmem_size / 2;
-    size_t shmem_offset = 0;
-    size_t global_offset = 0;  // TODO get this based on the block_tile_idx;
+    size_t rows_in_block = this->tile_indexer.rows_in_tile(block_tile_idx);
 
-    // TileIdx matrix_idx =
-    //     tile_indexer.convert_index(block_tile_idx, TILE_MATRIX);
+    // Convert coordinates relative to one tile to coordinates relative to
+    // another tile. Note that we need to use block_tile_idx since it has
+    // references to its parents.
+    Point tile_point(0, 0);
+    Point matrix_idx = this->tile_indexer.convert_index(
+        tile_point, &block_tile_idx, (size_t)TILE_MATRIX);
 
     // size_t global_mem_idx = tile_indexer.t2g(matrix_idx);
 
