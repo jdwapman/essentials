@@ -57,7 +57,7 @@ class TileIterator {
         shmem_size(_shmem_size),
         tile_indexer(_tile_indexer) {
     shmem_row_offsets = shmem;
-    shmem_output = shmem + shmem_size / 2;
+    shmem_output = &shmem[tile_row_size];
   }
 
  public:
@@ -161,7 +161,7 @@ class TileIndexer {
   }
 
   __device__ __forceinline__ size_t num_col_tiles(const TileIdx idx) {
-    return num_col_tiles(idx);
+    return num_col_tiles(idx.h);
   }
 
   // Number of child tiles for a tile at the given level of the hierarchy, where
@@ -236,6 +236,10 @@ class TileIndexer {
     return point;
   }
 
+  __device__ __forceinline__ size_t point2address(Point _point) {
+    return _point.row * tile_row_dim[0] + _point.col;
+  }
+
   // Create arrays here to hold information about tile
   size_t tile_row_dim[HIERARCHY_N + 1];
   size_t tile_col_dim[HIERARCHY_N + 1];
@@ -275,7 +279,6 @@ class MatrixTileIterator
 
     // If we're loading the first tile in a batch, the device tile is by default
     // (0, 0) relative to the parent
-
     TileIdx device_tile_idx(0, 0, &parent_tile_idx);
 
     // Then, we need to get the block idx relative to the device tile
@@ -292,18 +295,19 @@ class MatrixTileIterator
     // Convert coordinates relative to one tile to coordinates relative to
     // another tile. Note that we need to use block_tile_idx since it has
     // references to its parents.
-    Point tile_point(0, 0);
     Point matrix_idx = this->tile_indexer.convert_index(
-        tile_point, &block_tile_idx, (size_t)TILE_MATRIX);
+        Point(0, 0), &block_tile_idx, (size_t)TILE_MATRIX);
 
-    // size_t global_mem_idx = tile_indexer.t2g(matrix_idx);
-
-    // 1. Get this block's tile index relative to the parent tile
-
-    // 2. Iterate over the rows assigned to this block and store them in shared
-    //    memory. Note that we need to do an address conversion to global
-
-    // 3. Initialize the output to 0
+    // Iterate and copy to shared
+    // TODO convert to ampere async copy
+    // TODO unroll this
+    for (size_t row_idx = threadIdx.x; row_idx < rows_in_block;
+         row_idx += blockDim.x) {
+      // Copy the row offset to shared memory
+      this->shmem_row_offsets[row_idx] =
+          this->graph.get_row_offsets()[matrix_idx.row + row_idx];
+      this->shmem_output[row_idx] = 0;
+    }
   }
 
   __device__ __forceinline__ void process_tile(TileIdx parent_tile_idx) {
@@ -317,6 +321,33 @@ class MatrixTileIterator
     // Unload data from shared memory
     if (threadIdx.x == 0 && blockIdx.x == 0) {
       printf("Unloading data from shared memory\n");
+    }
+
+    // If we're unloading the last tile in a batch, the device tile is by
+    // default (0, N-1) relative to the parent
+    TileIdx device_tile_idx(
+        0, this->tile_indexer.num_child_tiles_col(TILE_MATRIX) - 1,
+        &parent_tile_idx);
+
+    // Then, we need to get the block idx relative to the device tile
+    TileIdx block_tile_idx(blockIdx.x, 0, &device_tile_idx);
+
+    // Then iterate over the number of rows in the block
+    size_t rows_in_block = this->tile_indexer.rows_in_tile(block_tile_idx);
+
+    // Convert coordinates relative to one tile to coordinates relative to
+    // another tile. Note that we need to use block_tile_idx since it has
+    // references to its parents.
+    Point matrix_idx = this->tile_indexer.convert_index(
+        Point(0, 0), &block_tile_idx, (size_t)TILE_MATRIX);
+
+    // Iterate and copy from shared to global
+    for (size_t row_idx = threadIdx.x; row_idx < rows_in_block;
+         row_idx += blockDim.x) {
+      this->graph.get_row_offsets()[matrix_idx.row + row_idx] =
+          this->shmem_row_offsets[row_idx];
+
+      // this->output[matrix_idx.row + row_idx] = this->shmem_output[row_idx];
     }
   }
 
