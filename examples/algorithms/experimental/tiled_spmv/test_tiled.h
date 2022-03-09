@@ -26,28 +26,19 @@ __global__ void spmv_tiled_kernel(graph_t graph,
   extern __shared__ row_t shmem[];
 
   // Set up the tiles
-  TileIndexer<4> tile_indexer(ROWMAJOR);
 
-  // NOTE: Need to be able to express this for either row dims or sub-tiles
+  auto base_layout =
+      make_layout(graph.get_number_of_rows(), graph.get_number_of_columns());
+  auto device_batch_tiled_layout = base_layout.tile(
+      tile_row_size * blockDim.x, graph.get_number_of_columns());
+  auto device_tiled_layout =
+      device_batch_tiled_layout.tile(tile_row_size * blockDim.x, tile_col_size);
+  auto block_tiled_layout =
+      device_tiled_layout.tile(tile_row_size, tile_col_size);
 
-  // The matrix dimensions
-  tile_indexer.add_tile_info(TILE_MATRIX, graph.get_number_of_rows(),
-                             graph.get_number_of_columns());
-
-  // The device batch tile dimensions
-  tile_indexer.add_tile_info(TILE_DEVICE_BATCH, tile_row_size * blockDim.x,
-                             graph.get_number_of_columns());
-
-  // The device tile dimensions (all SMs working within the same column)
-  tile_indexer.add_tile_info(TILE_DEVICE, tile_row_size * blockDim.x,
-                             tile_col_size);
-
-  // The block tile dimensions
-  tile_indexer.add_tile_info(TILE_BLOCK, tile_row_size, tile_col_size);
-
-  MatrixTileIterator<graph_t, vector_t, row_t, TileIndexer<4>, 4>
-      matrix_tile_iterator(graph, input, output, tile_row_size, tile_col_size,
-                           shmem, shmem_size, tile_indexer);
+  TileIterator<graph_t, vector_t, row_t, decltype(block_tiled_layout)>
+      matrix_tile_iterator(graph, input, output, shmem, shmem_size,
+                           block_tiled_layout);
 
   matrix_tile_iterator.process_all_tiles();
 
