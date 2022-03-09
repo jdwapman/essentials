@@ -2,17 +2,18 @@
 
 #include <cooperative_groups.h>
 #include <cuda_runtime_api.h>
+#include <tuple>
 
 namespace cg = cooperative_groups;
 
-#define CHECK_CUDA(func)                                                   \
-  {                                                                        \
-    cudaError_t status = (func);                                           \
-    if (status != cudaSuccess) {                                           \
-      printf("CUDA API failed at line %d with error: %s (%d)\n", __LINE__, \
-             cudaGetErrorString(status), status);                          \
-      exit(EXIT_FAILURE);                                                  \
-    }                                                                      \
+#define CHECK_CUDA(func)                                                  \
+  {                                                                       \
+    cudaError_t status = (func);                                          \
+    if (status != cudaSuccess) {                                          \
+      printf("CUDA API failed at file %s, line %d with error: %s (%d)\n", \
+             __FILE__, __LINE__, cudaGetErrorString(status), status);     \
+      exit(EXIT_FAILURE);                                                 \
+    }                                                                     \
   }
 
 #define print_device(fmt, ...)                   \
@@ -48,4 +49,114 @@ void display(vector_t v, std::string name, bool verbose = true) {
     }
     std::cout << "]" << std::endl;
   }
+}
+
+// Helper function to concatenate tuples of tuples. For example:
+// < <1, 2> > + < < 3, 4> > = < <1, 2>, <3, 4> >
+// Notice how this keeps the tuples at the same level of nesting
+template <typename T, typename... Ts>
+auto concat(T t, Ts... ts) {
+  return std::tuple_cat(std::make_tuple(t), concat(ts...));
+}
+
+// Apply an operation to a given tuple element at with the index selected at
+// runtime Note the need for a tuple element, which is necessary if the lambda
+// function is to change an internal member of the tuple when the function exits
+template <typename func, size_t Idx = 0, typename... Ts>
+__host__ __device__ __forceinline__ constexpr void
+TupleRuntimeApply(func foo, size_t target_idx, std::tuple<Ts...>& tup) {
+  if constexpr (Idx == sizeof...(Ts)) {
+    return;
+  } else {
+    if (Idx == target_idx) {
+      auto& x = std::get<Idx>(tup);
+      foo(Idx, x);
+    }
+
+    // Recurse again
+    TupleRuntimeApply<func, Idx + 1>(foo, target_idx, tup);
+  }
+
+  return;
+}
+
+// Return a value from the given tuple at an index selected at runtime
+// Can also modify the tuple
+template <size_t Idx = 0, typename... Ts>
+__host__ __device__ __forceinline__ constexpr auto TupleReturnValue(
+    size_t target_idx,
+    const std::tuple<Ts...>& tup) {
+  if constexpr (Idx == sizeof...(Ts)) {
+    // Base case. Should never get here but just return the last element anyways
+    auto& x = std::get<Idx - 1>(tup);
+    auto retval_tup = x;
+    return retval_tup;
+  } else {
+    // Extract the tuple index and evaluate
+    auto x = std::get<Idx>(tup);
+    auto retval_tup = x;
+
+    // Recurse to get the next element.
+    auto retval_recurse = TupleReturnValue<Idx + 1>(target_idx, tup);
+
+    // Pick which one to return
+    if (target_idx == Idx) {
+      return retval_tup;
+    } else {
+      return retval_recurse;
+    }
+  }
+}
+
+// Iterate over all elements in a tuple and apply an operation to each
+template <typename func, size_t Idx = 0, typename... Ts>
+__host__ __device__ __forceinline__ constexpr void TupleForEach(
+    func foo,
+    std::tuple<Ts...>& tup) {
+  if constexpr (Idx == sizeof...(Ts)) {
+    // base case
+    return;
+  } else {
+    // Extract the tuple index and evaluate
+    auto& x = std::get<Idx>(tup);
+    foo(Idx, x);
+
+    // Going for next element.
+    TupleForEach<func, Idx + 1>(foo, tup);
+  }
+
+  return;
+}
+
+// Performs reduction on tuples.
+// Need two lambdas
+// 1) Perform the reduction c = op(a, b)
+// 2) Extract the value to reduce from the tuple
+template <typename IdentityT,
+          typename ExtractionFunc,
+          typename ReductionFunc,
+          size_t Idx = 0,
+          typename... Ts>
+__host__ __device__ __forceinline__ constexpr IdentityT TupleReduction(
+    IdentityT identity,
+    ExtractionFunc f_extract,
+    ReductionFunc f_reduce,
+    std::tuple<Ts...> tup) {
+  if constexpr (Idx == sizeof...(Ts)) {
+    // base case
+    return identity;
+  } else {
+    // Extract the tuple index and evaluate
+    auto x = std::get<Idx>(tup);
+    IdentityT curr = f_extract(x);
+
+    // Going for next element.
+    IdentityT next =
+        TupleReduction<IdentityT, ExtractionFunc, ReductionFunc, Idx + 1>(
+            identity, f_extract, f_reduce, tup);
+
+    return f_reduce(curr, next);
+  }
+
+  return identity;
 }

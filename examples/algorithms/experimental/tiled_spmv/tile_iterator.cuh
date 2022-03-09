@@ -3,6 +3,11 @@
 #include "spmv_utils.cuh"
 #include <tuple>
 
+#define TILE_MATRIX 0
+#define TILE_DEVICE_BATCH 1
+#define TILE_DEVICE 2
+#define TILE_BLOCK 343
+
 template <typename row_t, typename col_t>
 struct Point {
   row_t row;
@@ -46,34 +51,30 @@ make_tile_index(row_t row, col_t col, parent_t parent) {
                                                                     parent);
 }
 
-template <typename rowdim_t,
-          typename coldim_t,
-          typename parentlayout_t,
-          int hierarchy_level>
+// NOTE: Need to store layout data as a tuple.
+// Format: < <row0, col0>, <row1, col1>, ... >
+
+template <typename tiledim_t>
 class Layout {
  public:
   __host__ __device__
-      __forceinline__ constexpr Layout(const rowdim_t& rowdim,
-                                       const coldim_t& coldim,
-                                       const parentlayout_t& parentlayout)
-      : rowdim(rowdim), coldim(coldim), parentlayout(parentlayout) {}
+      __forceinline__ constexpr Layout(const tiledim_t& _tiledims)
+      : tiledims(_tiledims) {}
 
-  template <typename _rowdim_t, typename _coldim_t>
+  template <typename rowdim_t, typename coldim_t>
   __host__ __device__ __forceinline__ constexpr auto tile(
-      const _rowdim_t rowdim,
-      const _coldim_t coldim) {
-    return make_layout(rowdim, coldim, *this);
+      const rowdim_t rowdim,
+      const coldim_t coldim) {
+    return make_layout(rowdim, coldim, this->tiledims);
   }
 
   __host__ __device__ __forceinline__ constexpr bool has_parent() const {
-    constexpr bool is_same = std::is_same<parentlayout_t, std::tuple<>>::value;
-
-    return !is_same;
+    return std::tuple_size<tiledim_t>::value > 1;
   }
 
   __host__ __device__ __forceinline__ constexpr auto get_hierarchy_level()
       const {
-    return hierarchy_level;
+    return std::tuple_size<tiledim_t>::value - 1;
   }
 
   // ===== TILE INFO FUNCTIONS ===== //
@@ -81,20 +82,14 @@ class Layout {
   // Get the dimensions of a tile
   __device__ __forceinline__ constexpr auto rows_in_tile(
       const int hierarchy) const {
-    if (hierarchy == get_hierarchy_level()) {
-      return rowdim;
-    } else {
-      return rows_in_tile(hierarchy - 1);
-    }
+    auto tiledim = TupleReturnValue(hierarchy, tiledims);
+    return std::get<0>(tiledim);
   }
 
   __device__ __forceinline__ constexpr auto cols_in_tile(
       const int hierarchy) const {
-    if (hierarchy == get_hierarchy_level()) {
-      return coldim;
-    } else {
-      return cols_in_tile(hierarchy - 1);
-    }
+    auto tiledim = TupleReturnValue(hierarchy, tiledims);
+    return std::get<1>(tiledim);
   }
 
   template <typename layout_t, typename tile_index_t>
@@ -112,271 +107,154 @@ class Layout {
   }
 
   // Get the number of child tiles
+  // TODO need to handle the remainders
   __device__ __forceinline__ constexpr auto num_child_row_tiles(
       const int& hierarchy) const {
     if (hierarchy == get_hierarchy_level()) {
       return 1;
     } else {
-      return rows_in_tile(hierarchy) / rows_in_tile(hierarchy + 1);
+      auto num_even_tiles =
+          rows_in_tile(hierarchy) / rows_in_tile(hierarchy + 1);
+
+      if (rows_in_tile(hierarchy) % rows_in_tile(hierarchy + 1) == 0) {
+        return num_even_tiles;
+      } else {
+        return num_even_tiles + 1;
+      }
     }
   }
 
   __device__ __forceinline__ constexpr auto num_child_col_tiles(
       const int hierarchy) const {
-    if constexpr (hierarchy == get_hierarchy_level()) {
+    if (hierarchy == get_hierarchy_level()) {
       return 1;
     } else {
-      return cols_in_tile(hierarchy) / cols_in_tile(hierarchy + 1);
+      auto num_even_tiles =
+          cols_in_tile(hierarchy) / cols_in_tile(hierarchy + 1);
+
+      if (cols_in_tile(hierarchy) % cols_in_tile(hierarchy + 1) == 0) {
+        return num_even_tiles;
+      } else {
+        return num_even_tiles + 1;
+      }
     }
   }
 
-  template <typename tile_index_t>
-  __device__ __forceinline__ auto num_child_row_tiles(
-      const tile_index_t& tile_index) const {
-    return num_child_row_tiles(tile_index.getHierarchy());
-  }
+  // template <typename tile_index_t>
+  // __device__ __forceinline__ auto num_child_row_tiles(
+  //     const tile_index_t& tile_index) const {
+  //   return num_child_row_tiles(tile_index.getHierarchy());
+  // }
 
-  template <typename tile_index_t>
-  __device__ __forceinline__ auto num_child_col_tiles(
-      const tile_index_t& tile_index) const {
-    return num_child_col_tiles(tile_index.getHierarchy());
-  }
+  // template <typename tile_index_t>
+  // __device__ __forceinline__ auto num_child_col_tiles(
+  //     const tile_index_t& tile_index) const {
+  //   return num_child_col_tiles(tile_index.getHierarchy());
+  // }
 
-  // Get the number of tiles at the level of the given tile
-  __device__ __forceinline__ constexpr auto num_row_tiles_at_level(
-      const int& hierarchy) const {
-    if  (hierarchy == 0) {
-      return 1;
-    }
+  // // Get the number of tiles at the level of the given tile
+  // __device__ __forceinline__ constexpr auto num_row_tiles_at_level(
+  //     const int& hierarchy) const {
+  //   if (hierarchy == 0) {
+  //     return 1;
+  //   }
 
-    constexpr auto num_tiles =
-        rows_in_tile(hierarchy - 1) / rows_in_tile(hierarchy);
+  //   constexpr auto num_tiles =
+  //       rows_in_tile(hierarchy - 1) / rows_in_tile(hierarchy);
 
-    if constexpr (rows_in_tile() % rows_in_tile(hierarchy) != 0) {
-      return num_tiles + 1;
-    } else {
-      return num_tiles;
-    }
-  }
+  //   if constexpr (rows_in_tile() % rows_in_tile(hierarchy) != 0) {
+  //     return num_tiles + 1;
+  //   } else {
+  //     return num_tiles;
+  //   }
+  // }
 
-  __device__ __forceinline__ constexpr auto num_col_tiles_at_level(
-      const int& hierarchy) const {
-    if  (hierarchy == 0) {
-      return 1;
-    }
+  // __device__ __forceinline__ constexpr auto num_col_tiles_at_level(
+  //     const int& hierarchy) const {
+  //   if (hierarchy == 0) {
+  //     return 1;
+  //   }
 
-    constexpr auto num_tiles =
-        cols_in_tile(hierarchy - 1) / cols_in_tile(hierarchy);
+  //   constexpr auto num_tiles =
+  //       cols_in_tile(hierarchy - 1) / cols_in_tile(hierarchy);
 
-    if constexpr (cols_in_tile() % cols_in_tile(hierarchy) != 0) {
-      return num_tiles + 1;
-    } else {
-      return num_tiles;
-    }
-  }
+  //   if constexpr (cols_in_tile() % cols_in_tile(hierarchy) != 0) {
+  //     return num_tiles + 1;
+  //   } else {
+  //     return num_tiles;
+  //   }
+  // }
 
-  template <typename tile_index_t>
-  __device__ __forceinline__ constexpr auto num_row_tiles_at_level(
-      const tile_index_t& tile_index) const {
-    return num_row_tiles_at_level(tile_index.getHierarchy());
-  }
+  // template <typename tile_index_t>
+  // __device__ __forceinline__ constexpr auto num_row_tiles_at_level(
+  //     const tile_index_t& tile_index) const {
+  //   return num_row_tiles_at_level(tile_index.getHierarchy());
+  // }
 
-  template <typename tile_index_t>
-  __device__ __forceinline__ constexpr auto num_col_tiles_at_level(
-      const tile_index_t& tile_index) const {
-    return num_col_tiles_at_level(tile_index.getHierarchy());
-  }
+  // template <typename tile_index_t>
+  // __device__ __forceinline__ constexpr auto num_col_tiles_at_level(
+  //     const tile_index_t& tile_index) const {
+  //   return num_col_tiles_at_level(tile_index.getHierarchy());
+  // }
 
-  // Not constexpr since the point changes at runtime
-  template <typename point_t, typename tile_index_t, typename hierarchy_t>
-  __device__ __forceinline__ auto remap_point(point_t point,
-                                              tile_index_t tile_index,
-                                              hierarchy_t goal_hierarchy) {
-    if (tile_index.getHierarchy() < goal_hierarchy) {
-      // Going from a big tile to a small tile
+  // // Not constexpr since the point changes at runtime
+  // template <typename point_t, typename tile_index_t, typename hierarchy_t>
+  // __device__ __forceinline__ auto remap_point(point_t point,
+  //                                             tile_index_t tile_index,
+  //                                             hierarchy_t goal_hierarchy) {
+  //   if (tile_index.getHierarchy() < goal_hierarchy) {
+  //     // Going from a big tile to a small tile
 
-      Point smaller_point(
-          point.row % rows_in_tile(tile_index.getHierarchy() + 1),
-          point.col % cols_in_tile(tile_index.getHierarchy()) + 1);
+  //     Point smaller_point(
+  //         point.row % rows_in_tile(tile_index.getHierarchy() + 1),
+  //         point.col % cols_in_tile(tile_index.getHierarchy()) + 1);
 
-      auto smaller_tile_idx = make_tile_idx(
-          point.row / rows_in_tile(tile_index.getHierarchy() + 1),
-          point.col / cols_in_tile(tile_index.getHierarchy() + 1), tile_index);
+  //     auto smaller_tile_idx = make_tile_idx(
+  //         point.row / rows_in_tile(tile_index.getHierarchy() + 1),
+  //         point.col / cols_in_tile(tile_index.getHierarchy() + 1),
+  //         tile_index);
 
-      return remap_point(smaller_point, smaller_tile_idx, goal_hierarchy);
+  //     return remap_point(smaller_point, smaller_tile_idx, goal_hierarchy);
 
-    } else if (tile_index.getHierarchy() > goal_hierarchy) {
-      // Going from a small to a big tile
-      Point larger_point(
-          point.row + tile_index.row * rows_in_tile(tile_index.getHierarchy()),
-          point.col + tile_index.col * cols_in_tile(tile_index.getHierarchy()));
+  //   } else if (tile_index.getHierarchy() > goal_hierarchy) {
+  //     // Going from a small to a big tile
+  //     Point larger_point(
+  //         point.row + tile_index.row *
+  //         rows_in_tile(tile_index.getHierarchy()), point.col + tile_index.col
+  //         * cols_in_tile(tile_index.getHierarchy()));
 
-      auto larger_tile_idx = tile_index.parent;
+  //     auto larger_tile_idx = tile_index.parent;
 
-      return remap_point(larger_point, larger_tile_idx, goal_hierarchy);
-    } else {
-      return point;
-    }
-  }
+  //     return remap_point(larger_point, larger_tile_idx, goal_hierarchy);
+  //   } else {
+  //     return point;
+  //   }
+  // }
 
- private:
-  rowdim_t rowdim;
-  coldim_t coldim;
-  parentlayout_t parentlayout;
+  tiledim_t tiledims;
 };
 
 template <typename rowdim_t, typename coldim_t>
 __host__ __device__ __forceinline__ constexpr auto make_layout(
     rowdim_t rowdim,
     coldim_t coldim) {
-  std::tuple<> blank_tuple;
-  return Layout<rowdim_t, coldim_t, std::tuple<>, 0>(rowdim, coldim,
-                                                     blank_tuple);
+  std::tuple<rowdim_t, coldim_t> tiledim{rowdim, coldim};
+  std::tuple<decltype(tiledim)> tiledim_wrapper{tiledim};
+  return Layout<decltype(tiledim_wrapper)>(tiledim_wrapper);
 }
 
 template <typename rowdim_t, typename coldim_t, typename parentlayout_t>
 __host__ __device__ __forceinline__ constexpr auto
 make_layout(rowdim_t rowdim, coldim_t coldim, parentlayout_t parentlayout) {
-  return Layout<rowdim_t, coldim_t, parentlayout_t,
-                parentlayout.get_hierarchy_level() + 1>(rowdim, coldim,
-                                                        parentlayout);
+  std::tuple<rowdim_t, coldim_t> tiledim{rowdim, coldim};
+  std::tuple<decltype(tiledim)> tiledim_wrapper{tiledim};
+
+  // concatenate parentlayout and tiledim tuples
+  auto tiledim_wrapper_nested =
+      std::tuple_cat(parentlayout.tiledims, tiledim_wrapper);
+
+  return Layout<decltype(tiledim_wrapper_nested)>(tiledim_wrapper_nested);
 }
-
-
-
-#define ROWMAJOR 0
-#define COLMAJOR 1
-
-#define TILE_MATRIX 0
-#define TILE_DEVICE_BATCH 1
-#define TILE_DEVICE 2
-#define TILE_BLOCK 3
-
-// template <size_t HIERARCHY_N>
-// class TileIndexer {
-//  public:
-//   // Number of row tiles at the given level of the hierarchy, where idx is a
-//   // pointer to a tile in that hierarchy
-//   // TODO is this correct? Am I going the wrong way in the hierarchy?
-//   __device__ __forceinline__ size_t num_row_tiles(const size_t h) {
-//     if (h == 0) {
-//       return 1;
-//     }
-
-//     size_t num = tile_row_dim[h - 1] / tile_row_dim[h];
-
-//     if (tile_row_dim[h - 1] % tile_row_dim[h] != 0) {
-//       num++;
-//     }
-
-//     return num;
-//   }
-
-//   __device__ __forceinline__ size_t num_row_tiles(const TileIdx idx) {
-//     return num_row_tiles(idx.h);
-//   }
-
-//   // Number of col tiles at the given level of the hierarchy, where idx
-//   // is a pointer to a tile in that hierarchy
-//   __device__ __forceinline__ size_t num_col_tiles(const size_t h) {
-//     if (h == 0) {
-//       return 1;
-//     }
-
-//     size_t num = tile_col_dim[h - 1] / tile_col_dim[h];
-
-//     if (tile_col_dim[h - 1] % tile_col_dim[h] != 0) {
-//       num++;
-//     }
-
-//     return num;
-//   }
-
-//   __device__ __forceinline__ size_t num_col_tiles(const TileIdx idx) {
-//     return num_col_tiles(idx.h);
-//   }
-
-//   // Number of child tiles for a tile at the given level of the hierarchy,
-//   where
-//       // idx is a pointer to a tile in that hierarchy
-//       __device__ __forceinline__ size_t
-//       num_child_tiles_row(const size_t h) {
-//     if (h == HIERARCHY_N - 1) {
-//       return 1;
-//     }
-
-//     return tile_row_dim[h] / tile_row_dim[h + 1];
-//   }
-
-//   __device__ __forceinline__ size_t num_child_tiles_row(const TileIdx idx) {
-//     return num_child_tiles_row(idx.h);
-//   }
-
-//   // Number of child tiles for a tile at the given level of the hierarchy,
-//   where
-//       // idx is a pointer to a tile in that hierarchy
-//       __device__ __forceinline__ size_t
-//       num_child_tiles_col(const size_t h) {
-//     if (h == HIERARCHY_N - 1) {
-//       return 1;
-//     }
-
-//     return tile_col_dim[h] / tile_col_dim[h + 1];
-//   }
-
-//   __device__ __forceinline__ size_t num_child_tiles_col(const TileIdx idx) {
-//     return num_child_tiles_col(idx.h);
-//   }
-
-//   // Given a TileIdx struct with the tile's row, column, and level in the
-//   // hierarchy, convert that to the row, column coordinates of the tile in
-//   the
-//       // goal hierarchy
-//       __device__ __forceinline__ Point
-//       convert_index(Point _point, TileIdx* _idx, size_t _goal_h) {
-//     // CONVERT TO ITERATIVE
-//     Point point = _point;
-//     TileIdx* idx = _idx;
-//     size_t goal_h = _goal_h;
-
-//     TileIdx temp_idx;
-
-//     while (idx->h != goal_h) {
-//       // Recursive implementation.
-//       if (goal_h < idx->h) {
-//         // Go from a small tile to a large tile
-//         Point larger_point(point.row + idx->row * tile_row_dim[idx->h],
-//                            point.col + idx->col * tile_col_dim[idx->h]);
-
-//         point = larger_point;
-//         idx = idx->parent;
-
-//       } else if (goal_h > idx->h) {
-//         // Go from a large tile to a small tile
-//         // Calculate the point in the immediately smaller tile
-//         Point smaller_point(point.row % tile_row_dim[idx->h + 1],
-//                             point.col % tile_col_dim[idx->h + 1]);
-
-//         temp_idx.row = point.row / tile_row_dim[idx->h + 1];
-//         temp_idx.col = point.col / tile_col_dim[idx->h + 1];
-//         temp_idx.h = idx->h + 1;
-//         temp_idx.parent = NULL;
-
-//         point = smaller_point;
-//         idx = &temp_idx;
-//       } else {
-//         printf("ERROR\n");
-//       }
-//     }
-
-//     return point;
-//   }
-
-//   // Create arrays here to hold information about tile
-//   size_t tile_row_dim[HIERARCHY_N + 1];
-//   size_t tile_col_dim[HIERARCHY_N + 1];
-//   size_t format;
-// };
 /*
 template <typename graph_t,
           typename vector_t,

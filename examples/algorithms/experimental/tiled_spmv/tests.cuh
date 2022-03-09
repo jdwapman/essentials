@@ -64,19 +64,63 @@
 // }
 
 __global__ void tile_test(int* success) {
-  auto layout_0 = make_layout(1000, 1000);
-  auto layout_1 = make_layout(100, 100, layout_0);
-  auto layout_2 = make_layout(10, 10, layout_1);
-  auto layout_3 = make_layout(5, 5, layout_2);
+  auto r0 = 1004;
+  auto r1 = 200;
+  auto r2 = 20;
+  auto r3 = 10;
 
-  if (layout_3.rows_in_tile(0) == 1000 && layout_3.cols_in_tile(0) == 1000) {
+  auto c0 = 503;
+  auto c1 = 250;
+  auto c2 = 25;
+  auto c3 = 5;
+
+  auto layout_0 = make_layout(r0, c0);
+  auto layout_1 = make_layout(r1, c1, layout_0);
+  auto layout_2 = make_layout(r2, c2, layout_1);
+  auto layout_3 = make_layout(r3, c3, layout_2);
+
+  auto layout = layout_3;
+
+  // Check that we can get the tile dimensions correctly
+  if (layout.rows_in_tile(0) == r0 && layout.cols_in_tile(0) == c0 &&
+      layout.rows_in_tile(1) == r1 && layout.cols_in_tile(1) == c1 &&
+      layout.rows_in_tile(2) == r2 && layout.cols_in_tile(2) == c2 &&
+      layout.rows_in_tile(3) == r3 && layout.cols_in_tile(3) == c3) {
     success[0] = 1;
   } else {
     success[0] = 0;
-  return ;
+    printf("FAILED\n");
+    printf("(%d,%d), (%d,%d), (%d,%d), (%d,%d)\n", r0, c0, r1, c1, r2, c2, r3,
+           c3);
+    printf("(%d,%d), (%d,%d), (%d,%d), (%d,%d)\n", layout.rows_in_tile(0),
+           layout.cols_in_tile(0), layout.rows_in_tile(1),
+           layout.cols_in_tile(1), layout.rows_in_tile(2),
+           layout.cols_in_tile(2), layout.rows_in_tile(3),
+           layout.cols_in_tile(3));
+    return;
   }
 
-  success[0] = 1;
+  if (layout.num_child_row_tiles(0) == ceil((float)r0 / (float)r1) &&
+      layout.num_child_col_tiles(0) == ceil((float)c0 / (float)c1) &&
+      layout.num_child_row_tiles(1) == ceil((float)r1 / (float)r2) &&
+      layout.num_child_col_tiles(1) == ceil((float)c1 / (float)c2) &&
+      layout.num_child_row_tiles(2) == ceil((float)r2 / (float)r3) &&
+      layout.num_child_col_tiles(2) == ceil((float)c2 / (float)c3) &&
+      layout.num_child_row_tiles(3) == 1 &&
+      layout.num_child_col_tiles(3) == 1) {
+    success[1] = 1;
+  } else {
+    printf("FAILED\n");
+    printf("(%d,%d), (%d,%d), (%d,%d), (%d,%d)\n", r0, c0, r1, c1, r2, c2, r3,
+           c3);
+    printf("(%d,%d), (%d,%d), (%d,%d), (%d,%d)\n",
+           layout.num_child_row_tiles(0), layout.num_child_col_tiles(0),
+           layout.num_child_row_tiles(1), layout.num_child_col_tiles(1),
+           layout.num_child_row_tiles(2), layout.num_child_col_tiles(2),
+           layout.num_child_row_tiles(3), layout.num_child_col_tiles(3));
+    success[1] = 0;
+    return;
+  }
 }
 
 // TEST(IndexConverterTest, LargeToSmallTest) {
@@ -127,16 +171,17 @@ __global__ void tile_test(int* success) {
 //   ASSERT_EQ(col_d[3], 4326);
 // }
 
-// TEST(TileSetupTest, SetupTest) {
-//   // Set up cuda vectors
-//   thrust::device_vector<int> success_d(1);
+TEST(TileSetupTest, SetupTest) {
+  // Set up cuda vectors
+  thrust::device_vector<int> success_d(2);
 
-//   // Run kernel
-//   tile_test<<<1, 1>>>(success_d.data().get());
+  // Run kernel
+  tile_test<<<1, 1>>>(success_d.data().get());
 
-//   // Synchronize
-//   CHECK_CUDA(cudaDeviceSynchronize());
+  // Synchronize
+  CHECK_CUDA(cudaDeviceSynchronize());
 
-//   // Google test assert success == 1
-//   ASSERT_EQ(success_d[0], 1);
-// }
+  // Google test assert success == 1
+  ASSERT_EQ(success_d[0], 1);
+  ASSERT_EQ(success_d[1], 1);
+}
