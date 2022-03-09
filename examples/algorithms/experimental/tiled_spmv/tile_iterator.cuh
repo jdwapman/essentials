@@ -183,7 +183,7 @@ class Layout {
     return num_col_tiles_at_level(tile_index.getHierarchy());
   }
 
-  // // Not constexpr since the point changes at runtime
+  // Not constexpr since the point changes at runtime
   // template <typename point_t, typename tile_index_t, typename hierarchy_t>
   // __device__ __forceinline__ auto remap_point(point_t point,
   //                                             tile_index_t tile_index,
@@ -241,7 +241,7 @@ make_layout(rowdim_t rowdim, coldim_t coldim, parentlayout_t parentlayout) {
 
   return Layout<decltype(tiledim_wrapper_nested)>(tiledim_wrapper_nested);
 }
-/*
+
 template <typename graph_t,
           typename vector_t,
           typename shmem_t,
@@ -410,4 +410,3 @@ class TileIterator {
 
   layout_t tile_layout;
 };
-*/

@@ -5,33 +5,48 @@
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 
-// __global__ void large_to_small_kernel(int* row, int* col) {
-//   TileIndexer<4> tile_indexer(ROWMAJOR);
+__global__ void large_to_small_kernel(int* row, int* col) {
+  TileIndexer<4> tile_indexer(ROWMAJOR);
 
-//   tile_indexer.add_tile_info(0, 1000, 1000);
-//   tile_indexer.add_tile_info(1, 100, 100);
-//   tile_indexer.add_tile_info(2, 10, 10);
-//   tile_indexer.add_tile_info(3, 5, 5);
+  auto r0 = 10000;
+  auto r1 = 1000;
+  auto r2 = 100;
+  auto r3 = 10;
 
-//   Point pt(405, 871);
+  auto c0 = 10000;
+  auto c1 = 1000;
+  auto c2 = 100;
+  auto c3 = 10;
 
-//   // Set up the tile info
-//   TileIdx top;
+  auto layout_0 = make_layout(r0, c0);
+  auto layout_1 = make_layout(r1, c1, layout_0);
+  auto layout_2 = make_layout(r2, c2, layout_1);
+  auto layout_3 = make_layout(r3, c3, layout_2);
 
-//   Point new_point_0 = tile_indexer.convert_index(pt, &top, 0);
-//   Point new_point_1 = tile_indexer.convert_index(pt, &top, 1);
-//   Point new_point_2 = tile_indexer.convert_index(pt, &top, 2);
-//   Point new_point_3 = tile_indexer.convert_index(pt, &top, 3);
+  auto layout = layout_3;
 
-//   row[0] = new_point_0.row;
-//   col[0] = new_point_0.col;
-//   row[1] = new_point_1.row;
-//   col[1] = new_point_1.col;
-//   row[2] = new_point_2.row;
-//   col[2] = new_point_2.col;
-//   row[3] = new_point_3.row;
-//   col[3] = new_point_3.col;
-// }
+  Point pt(405, 871);
+
+  // Set up the tile info
+  auto t0 = make_tile_index(0,0);
+  auto t1 = make_tile_index(4, 5, t0);
+  auto t2 = make_tile_index(5,3, t1);
+  auto t3 = make_tile_index(9, 7, t2);
+
+  Point new_point_0 = tile_indexer.convert_index(pt, t3, 0);
+  Point new_point_1 = tile_indexer.convert_index(pt, t3, 1);
+  Point new_point_2 = tile_indexer.convert_index(pt, t3, 2);
+  Point new_point_3 = tile_indexer.convert_index(pt, t3, 3);
+
+  row[0] = new_point_0.row;
+  col[0] = new_point_0.col;
+  row[1] = new_point_1.row;
+  col[1] = new_point_1.col;
+  row[2] = new_point_2.row;
+  col[2] = new_point_2.col;
+  row[3] = new_point_3.row;
+  col[3] = new_point_3.col;
+}
 
 // __global__ void small_to_large_kernel(int* row, int* col) {
 //   TileIndexer<4> tile_indexer(ROWMAJOR);
@@ -147,29 +162,29 @@ __global__ void tile_test(int* success) {
   }
 }
 
-// TEST(IndexConverterTest, LargeToSmallTest) {
-//   // Set up cuda vectors
-//   thrust::device_vector<int> row_d(4);
-//   thrust::device_vector<int> col_d(4);
+TEST(IndexConverterTest, LargeToSmallTest) {
+  // Set up cuda vectors
+  thrust::device_vector<int> row_d(4);
+  thrust::device_vector<int> col_d(4);
 
-//   // Run kernel
-//   large_to_small_kernel<<<1, 1>>>(row_d.data().get(), col_d.data().get());
+  // Run kernel
+  large_to_small_kernel<<<1, 1>>>(row_d.data().get(), col_d.data().get());
 
-//   // Synchronize
-//   CHECK_CUDA(cudaDeviceSynchronize());
+  // Synchronize
+  CHECK_CUDA(cudaDeviceSynchronize());
 
-//   ASSERT_EQ(row_d[0], 405);
-//   ASSERT_EQ(col_d[0], 871);
+  ASSERT_EQ(row_d[0], 405);
+  ASSERT_EQ(col_d[0], 871);
 
-//   ASSERT_EQ(row_d[1], 5);
-//   ASSERT_EQ(col_d[1], 71);
+  ASSERT_EQ(row_d[1], 5);
+  ASSERT_EQ(col_d[1], 71);
 
-//   ASSERT_EQ(row_d[2], 5);
-//   ASSERT_EQ(col_d[2], 1);
+  ASSERT_EQ(row_d[2], 5);
+  ASSERT_EQ(col_d[2], 1);
 
-//   ASSERT_EQ(row_d[3], 0);
-//   ASSERT_EQ(col_d[3], 1);
-// }
+  ASSERT_EQ(row_d[3], 0);
+  ASSERT_EQ(col_d[3], 1);
+}
 
 // TEST(IndexConverterTest, SmallToLargeTest) {
 //   // Set up cuda vectors
