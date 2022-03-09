@@ -3,48 +3,6 @@
 #include "spmv_utils.cuh"
 #include <tuple>
 
-template <typename rowdim_t, typename coldim_t, typename parentlayout_t>
-class Layout {
- public:
-  __host__ __device__
-      __forceinline__ constexpr Layout(const rowdim_t& rowdim,
-                                       const coldim_t& coldim,
-                                       const parentlayout_t& parentlayout)
-      : rowdim(rowdim), coldim(coldim), parentlayout(parentlayout) {}
-
-  template <typename _rowdim_t, typename _coldim_t>
-  __host__ __device__ __forceinline__ constexpr auto tile(
-      const _rowdim_t rowdim,
-      const _coldim_t coldim) {
-    return make_layout(rowdim, coldim, *this);
-  }
-
-  __host__ __device__ __forceinline__ constexpr bool has_parent() const {
-    constexpr bool is_same = std::is_same<parentlayout_t, std::tuple<>>::value;
-
-    return !is_same;
-  }
-
-  rowdim_t rowdim;
-  coldim_t coldim;
-  parentlayout_t parentlayout;
-};
-
-template <typename rowdim_t, typename coldim_t>
-__host__ __device__ __forceinline__ constexpr auto make_layout(
-    rowdim_t rowdim,
-    coldim_t coldim) {
-  std::tuple<> blank_tuple;
-  return Layout<rowdim_t, coldim_t, std::tuple<>>(rowdim, coldim, blank_tuple);
-}
-
-template <typename rowdim_t, typename coldim_t, typename parentlayout_t>
-__host__ __device__ __forceinline__ constexpr auto
-make_layout(rowdim_t rowdim, coldim_t coldim, parentlayout_t parentlayout) {
-  return Layout<rowdim_t, coldim_t, parentlayout_t>(rowdim, coldim,
-                                                    parentlayout);
-}
-
 template <typename row_t, typename col_t>
 struct Point {
   row_t row;
@@ -69,16 +27,8 @@ struct TileIdx {
     return hierarchy == comparare_hierarchy;
   }
 
-  __host__ __device__ __forceinline__ constexpr bool getHierarchy() const {
+  __host__ __device__ __forceinline__ constexpr auto getHierarchy() const {
     return hierarchy;
-  }
-
-  __host__ __device__ __forceinline__ constexpr auto num_row_children() const {
-    return 0;
-  }
-
-  __host__ __device__ __forceinline__ constexpr auto num_col_children() const {
-    return 0;
   }
 };
 
@@ -96,6 +46,204 @@ make_tile_index(row_t row, col_t col, parent_t parent) {
                                                                     parent);
 }
 
+template <typename rowdim_t,
+          typename coldim_t,
+          typename parentlayout_t,
+          int hierarchy_level>
+class Layout {
+ public:
+  __host__ __device__
+      __forceinline__ constexpr Layout(const rowdim_t& rowdim,
+                                       const coldim_t& coldim,
+                                       const parentlayout_t& parentlayout)
+      : rowdim(rowdim), coldim(coldim), parentlayout(parentlayout) {}
+
+  template <typename _rowdim_t, typename _coldim_t>
+  __host__ __device__ __forceinline__ constexpr auto tile(
+      const _rowdim_t rowdim,
+      const _coldim_t coldim) {
+    return make_layout(rowdim, coldim, *this);
+  }
+
+  __host__ __device__ __forceinline__ constexpr bool has_parent() const {
+    constexpr bool is_same = std::is_same<parentlayout_t, std::tuple<>>::value;
+
+    return !is_same;
+  }
+
+  __host__ __device__ __forceinline__ constexpr auto get_hierarchy_level()
+      const {
+    return hierarchy_level;
+  }
+
+  // ===== TILE INFO FUNCTIONS ===== //
+
+  // Get the dimensions of a tile
+  __device__ __forceinline__ constexpr auto rows_in_tile(
+      const int hierarchy) const {
+    if (hierarchy == get_hierarchy_level()) {
+      return rowdim;
+    } else {
+      return rows_in_tile(hierarchy - 1);
+    }
+  }
+
+  __device__ __forceinline__ constexpr auto cols_in_tile(
+      const int hierarchy) const {
+    if (hierarchy == get_hierarchy_level()) {
+      return coldim;
+    } else {
+      return cols_in_tile(hierarchy - 1);
+    }
+  }
+
+  template <typename layout_t, typename tile_index_t>
+  __device__ __forceinline__ constexpr auto rows_in_tile(
+      const layout_t layout,
+      const tile_index_t tile_index) const {
+    return rows_in_tile(layout, tile_index.getHierarchy());
+  }
+
+  template <typename layout_t, typename tile_index_t>
+  __device__ __forceinline__ constexpr auto cols_in_tile(
+      const layout_t layout,
+      const tile_index_t tile_index) const {
+    return cols_in_tile(layout, tile_index.getHierarchy());
+  }
+
+  // Get the number of child tiles
+  __device__ __forceinline__ constexpr auto num_child_row_tiles(
+      const int& hierarchy) const {
+    if (hierarchy == get_hierarchy_level()) {
+      return 1;
+    } else {
+      return rows_in_tile(hierarchy) / rows_in_tile(hierarchy + 1);
+    }
+  }
+
+  __device__ __forceinline__ constexpr auto num_child_col_tiles(
+      const int hierarchy) const {
+    if constexpr (hierarchy == get_hierarchy_level()) {
+      return 1;
+    } else {
+      return cols_in_tile(hierarchy) / cols_in_tile(hierarchy + 1);
+    }
+  }
+
+  template <typename tile_index_t>
+  __device__ __forceinline__ auto num_child_row_tiles(
+      const tile_index_t& tile_index) const {
+    return num_child_row_tiles(tile_index.getHierarchy());
+  }
+
+  template <typename tile_index_t>
+  __device__ __forceinline__ auto num_child_col_tiles(
+      const tile_index_t& tile_index) const {
+    return num_child_col_tiles(tile_index.getHierarchy());
+  }
+
+  // Get the number of tiles at the level of the given tile
+  __device__ __forceinline__ constexpr auto num_row_tiles_at_level(
+      const int& hierarchy) const {
+    if  (hierarchy == 0) {
+      return 1;
+    }
+
+    constexpr auto num_tiles =
+        rows_in_tile(hierarchy - 1) / rows_in_tile(hierarchy);
+
+    if constexpr (rows_in_tile() % rows_in_tile(hierarchy) != 0) {
+      return num_tiles + 1;
+    } else {
+      return num_tiles;
+    }
+  }
+
+  __device__ __forceinline__ constexpr auto num_col_tiles_at_level(
+      const int& hierarchy) const {
+    if  (hierarchy == 0) {
+      return 1;
+    }
+
+    constexpr auto num_tiles =
+        cols_in_tile(hierarchy - 1) / cols_in_tile(hierarchy);
+
+    if constexpr (cols_in_tile() % cols_in_tile(hierarchy) != 0) {
+      return num_tiles + 1;
+    } else {
+      return num_tiles;
+    }
+  }
+
+  template <typename tile_index_t>
+  __device__ __forceinline__ constexpr auto num_row_tiles_at_level(
+      const tile_index_t& tile_index) const {
+    return num_row_tiles_at_level(tile_index.getHierarchy());
+  }
+
+  template <typename tile_index_t>
+  __device__ __forceinline__ constexpr auto num_col_tiles_at_level(
+      const tile_index_t& tile_index) const {
+    return num_col_tiles_at_level(tile_index.getHierarchy());
+  }
+
+  // Not constexpr since the point changes at runtime
+  template <typename point_t, typename tile_index_t, typename hierarchy_t>
+  __device__ __forceinline__ auto remap_point(point_t point,
+                                              tile_index_t tile_index,
+                                              hierarchy_t goal_hierarchy) {
+    if (tile_index.getHierarchy() < goal_hierarchy) {
+      // Going from a big tile to a small tile
+
+      Point smaller_point(
+          point.row % rows_in_tile(tile_index.getHierarchy() + 1),
+          point.col % cols_in_tile(tile_index.getHierarchy()) + 1);
+
+      auto smaller_tile_idx = make_tile_idx(
+          point.row / rows_in_tile(tile_index.getHierarchy() + 1),
+          point.col / cols_in_tile(tile_index.getHierarchy() + 1), tile_index);
+
+      return remap_point(smaller_point, smaller_tile_idx, goal_hierarchy);
+
+    } else if (tile_index.getHierarchy() > goal_hierarchy) {
+      // Going from a small to a big tile
+      Point larger_point(
+          point.row + tile_index.row * rows_in_tile(tile_index.getHierarchy()),
+          point.col + tile_index.col * cols_in_tile(tile_index.getHierarchy()));
+
+      auto larger_tile_idx = tile_index.parent;
+
+      return remap_point(larger_point, larger_tile_idx, goal_hierarchy);
+    } else {
+      return point;
+    }
+  }
+
+ private:
+  rowdim_t rowdim;
+  coldim_t coldim;
+  parentlayout_t parentlayout;
+};
+
+template <typename rowdim_t, typename coldim_t>
+__host__ __device__ __forceinline__ constexpr auto make_layout(
+    rowdim_t rowdim,
+    coldim_t coldim) {
+  std::tuple<> blank_tuple;
+  return Layout<rowdim_t, coldim_t, std::tuple<>, 0>(rowdim, coldim,
+                                                     blank_tuple);
+}
+
+template <typename rowdim_t, typename coldim_t, typename parentlayout_t>
+__host__ __device__ __forceinline__ constexpr auto
+make_layout(rowdim_t rowdim, coldim_t coldim, parentlayout_t parentlayout) {
+  return Layout<rowdim_t, coldim_t, parentlayout_t,
+                parentlayout.get_hierarchy_level() + 1>(rowdim, coldim,
+                                                        parentlayout);
+}
+
+
+
 #define ROWMAJOR 0
 #define COLMAJOR 1
 
@@ -104,56 +252,9 @@ make_tile_index(row_t row, col_t col, parent_t parent) {
 #define TILE_DEVICE 2
 #define TILE_BLOCK 3
 
-// // Helper class used to convert between layers of a tile hierarchy.
-// // For example, if I'm at block tile 3 within a device tile, what
-// // is the overall block tile IDX?
-// // Note that 0 is the largest level of the hierarchy
-// // Included functions:
-// // 1. Given row,col coordinates with respect to one tile, get them with
-// respect
-// // to another tile
-// // 2. Given row,col coordinates with respect to one tile, get the
-// //    offset within the array
-// // 3. Given the offset within an array, get the row,col coordates with
-// respect
-// // to another tile
 // template <size_t HIERARCHY_N>
 // class TileIndexer {
 //  public:
-//   __device__ TileIndexer(const size_t _format) {
-// // Init arrays to 0
-// #pragma unroll
-//     for (size_t i = 0; i < HIERARCHY_N; i++) {
-//       tile_row_dim[i] = 0;
-//       tile_col_dim[i] = 0;
-//     }
-//     format = _format;
-//   }
-
-//   __device__ __forceinline__ void add_tile_info(const size_t hierarchy,
-//                                                 const size_t tile_rows,
-//                                                 const size_t tile_cols) {
-//     tile_row_dim[hierarchy] = tile_rows;
-//     tile_col_dim[hierarchy] = tile_cols;
-
-//     if (hierarchy >= 1) {
-//       tile_row_dim[hierarchy] =
-//           min(tile_row_dim[hierarchy], tile_row_dim[hierarchy - 1]);
-//       tile_col_dim[hierarchy] =
-//           min(tile_col_dim[hierarchy], tile_col_dim[hierarchy - 1]);
-//     }
-//   }
-
-//   // Number of rows in the tile given by idx
-//   __device__ __forceinline__ size_t rows_in_tile(const TileIdx idx) {
-//     return tile_row_dim[idx.h];
-//   }
-
-//   // Number of cols in the tile given by idx
-//   __device__ __forceinline__ size_t cols_in_tile(const TileIdx idx) {
-//     return tile_col_dim[idx.h];
-//   }
-
 //   // Number of row tiles at the given level of the hierarchy, where idx is a
 //   // pointer to a tile in that hierarchy
 //   // TODO is this correct? Am I going the wrong way in the hierarchy?
@@ -197,8 +298,9 @@ make_tile_index(row_t row, col_t col, parent_t parent) {
 
 //   // Number of child tiles for a tile at the given level of the hierarchy,
 //   where
-//   // idx is a pointer to a tile in that hierarchy
-//   __device__ __forceinline__ size_t num_child_tiles_row(const size_t h) {
+//       // idx is a pointer to a tile in that hierarchy
+//       __device__ __forceinline__ size_t
+//       num_child_tiles_row(const size_t h) {
 //     if (h == HIERARCHY_N - 1) {
 //       return 1;
 //     }
@@ -212,8 +314,9 @@ make_tile_index(row_t row, col_t col, parent_t parent) {
 
 //   // Number of child tiles for a tile at the given level of the hierarchy,
 //   where
-//   // idx is a pointer to a tile in that hierarchy
-//   __device__ __forceinline__ size_t num_child_tiles_col(const size_t h) {
+//       // idx is a pointer to a tile in that hierarchy
+//       __device__ __forceinline__ size_t
+//       num_child_tiles_col(const size_t h) {
 //     if (h == HIERARCHY_N - 1) {
 //       return 1;
 //     }
@@ -228,10 +331,9 @@ make_tile_index(row_t row, col_t col, parent_t parent) {
 //   // Given a TileIdx struct with the tile's row, column, and level in the
 //   // hierarchy, convert that to the row, column coordinates of the tile in
 //   the
-//   // goal hierarchy
-//   __device__ __forceinline__ Point convert_index(Point _point,
-//                                                  TileIdx* _idx,
-//                                                  size_t _goal_h) {
+//       // goal hierarchy
+//       __device__ __forceinline__ Point
+//       convert_index(Point _point, TileIdx* _idx, size_t _goal_h) {
 //     // CONVERT TO ITERATIVE
 //     Point point = _point;
 //     TileIdx* idx = _idx;
@@ -270,16 +372,12 @@ make_tile_index(row_t row, col_t col, parent_t parent) {
 //     return point;
 //   }
 
-//   __device__ __forceinline__ size_t point2address(Point _point) {
-//     return _point.row * tile_row_dim[0] + _point.col;
-//   }
-
 //   // Create arrays here to hold information about tile
 //   size_t tile_row_dim[HIERARCHY_N + 1];
 //   size_t tile_col_dim[HIERARCHY_N + 1];
 //   size_t format;
 // };
-
+/*
 template <typename graph_t,
           typename vector_t,
           typename shmem_t,
@@ -307,7 +405,8 @@ class TileIterator {
   }
 
   // __device__ __forceinline__ void load_tile(TileIdx parent_tile_idx) {
-  //   // Save the row offsets to shared memory and initialize the outputs to 0
+  //   // Save the row offsets to shared memory and initialize the outputs to
+  //   0
   //   // Load data into shared memory
 
   //   // If we're loading the first tile in a batch, the device tile is by
@@ -346,7 +445,8 @@ class TileIterator {
 
   // __device__ __forceinline__ void process_tile(TileIdx parent_tile_idx) {
   //   // Iterate over sub tiles
-  //   // Basically, here we need another tile iterator. This time for "device"
+  //   // Basically, here we need another tile iterator. This time for
+  //   "device"
   //   // tiles. These _should_ be really easy to implement
   // }
 
@@ -409,11 +509,13 @@ class TileIterator {
 // Iterate over the child tiles
 #pragma unroll
       for (child_tile_idx.row == 0;
-           child_tile_idx.row < parent_tile_idx.num_row_children();
+           child_tile_idx.row <
+           tile_layout.num_child_row_tiles(parent_tile_idx);
            child_tile_idx.row++) {
 #pragma unroll
         for (child_tile_idx.col = 0;
-             child_tile_idx.col < parent_tile_idx.num_col_children();
+             child_tile_idx.col <
+             tile_layout.num_child_col_tiles(parent_tile_idx);
              child_tile_idx.col++) {
           process_all_tiles_at_hierarchy(child_tile_idx);
         }
@@ -444,3 +546,4 @@ class TileIterator {
 
   layout_t tile_layout;
 };
+*/
