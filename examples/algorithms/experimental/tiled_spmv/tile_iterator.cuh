@@ -140,62 +140,48 @@ class Layout {
     }
   }
 
-  // template <typename tile_index_t>
-  // __device__ __forceinline__ auto num_child_row_tiles(
-  //     const tile_index_t& tile_index) const {
-  //   return num_child_row_tiles(tile_index.getHierarchy());
-  // }
+  template <typename tile_index_t>
+  __device__ __forceinline__ auto num_child_row_tiles(
+      const tile_index_t& tile_index) const {
+    return num_child_row_tiles(tile_index.getHierarchy());
+  }
 
-  // template <typename tile_index_t>
-  // __device__ __forceinline__ auto num_child_col_tiles(
-  //     const tile_index_t& tile_index) const {
-  //   return num_child_col_tiles(tile_index.getHierarchy());
-  // }
+  template <typename tile_index_t>
+  __device__ __forceinline__ auto num_child_col_tiles(
+      const tile_index_t& tile_index) const {
+    return num_child_col_tiles(tile_index.getHierarchy());
+  }
 
-  // // Get the number of tiles at the level of the given tile
-  // __device__ __forceinline__ constexpr auto num_row_tiles_at_level(
-  //     const int& hierarchy) const {
-  //   if (hierarchy == 0) {
-  //     return 1;
-  //   }
+  // Get the number of tiles at the level of the given tile
+  __device__ __forceinline__ constexpr auto num_row_tiles_at_level(
+      const int& hierarchy) const {
+    if (hierarchy == 0) {
+      return 1;
+    }
 
-  //   constexpr auto num_tiles =
-  //       rows_in_tile(hierarchy - 1) / rows_in_tile(hierarchy);
+    return num_child_row_tiles(hierarchy - 1);
+  }
 
-  //   if constexpr (rows_in_tile() % rows_in_tile(hierarchy) != 0) {
-  //     return num_tiles + 1;
-  //   } else {
-  //     return num_tiles;
-  //   }
-  // }
+  __device__ __forceinline__ constexpr auto num_col_tiles_at_level(
+      const int& hierarchy) const {
+    if (hierarchy == 0) {
+      return 1;
+    }
 
-  // __device__ __forceinline__ constexpr auto num_col_tiles_at_level(
-  //     const int& hierarchy) const {
-  //   if (hierarchy == 0) {
-  //     return 1;
-  //   }
+    return num_child_col_tiles(hierarchy - 1);
+  }
 
-  //   constexpr auto num_tiles =
-  //       cols_in_tile(hierarchy - 1) / cols_in_tile(hierarchy);
+  template <typename tile_index_t>
+  __device__ __forceinline__ constexpr auto num_row_tiles_at_level(
+      const tile_index_t& tile_index) const {
+    return num_row_tiles_at_level(tile_index.getHierarchy());
+  }
 
-  //   if constexpr (cols_in_tile() % cols_in_tile(hierarchy) != 0) {
-  //     return num_tiles + 1;
-  //   } else {
-  //     return num_tiles;
-  //   }
-  // }
-
-  // template <typename tile_index_t>
-  // __device__ __forceinline__ constexpr auto num_row_tiles_at_level(
-  //     const tile_index_t& tile_index) const {
-  //   return num_row_tiles_at_level(tile_index.getHierarchy());
-  // }
-
-  // template <typename tile_index_t>
-  // __device__ __forceinline__ constexpr auto num_col_tiles_at_level(
-  //     const tile_index_t& tile_index) const {
-  //   return num_col_tiles_at_level(tile_index.getHierarchy());
-  // }
+  template <typename tile_index_t>
+  __device__ __forceinline__ constexpr auto num_col_tiles_at_level(
+      const tile_index_t& tile_index) const {
+    return num_col_tiles_at_level(tile_index.getHierarchy());
+  }
 
   // // Not constexpr since the point changes at runtime
   // template <typename point_t, typename tile_index_t, typename hierarchy_t>

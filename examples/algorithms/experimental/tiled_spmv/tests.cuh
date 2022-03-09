@@ -100,6 +100,7 @@ __global__ void tile_test(int* success) {
     return;
   }
 
+  // Check that we get the number of child tiles correctly
   if (layout.num_child_row_tiles(0) == ceil((float)r0 / (float)r1) &&
       layout.num_child_col_tiles(0) == ceil((float)c0 / (float)c1) &&
       layout.num_child_row_tiles(1) == ceil((float)r1 / (float)r2) &&
@@ -119,6 +120,29 @@ __global__ void tile_test(int* success) {
            layout.num_child_row_tiles(2), layout.num_child_col_tiles(2),
            layout.num_child_row_tiles(3), layout.num_child_col_tiles(3));
     success[1] = 0;
+    return;
+  }
+
+  // Check that we can get the number of tiles at a level correctly
+  if (layout.num_row_tiles_at_level(0) == 1 &&
+      layout.num_col_tiles_at_level(0) == 1 &&
+      layout.num_row_tiles_at_level(1) == ceil((float)r0 / (float)r1) &&
+      layout.num_col_tiles_at_level(1) == ceil((float)c0 / (float)c1) &&
+      layout.num_row_tiles_at_level(2) == ceil((float)r1 / (float)r2) &&
+      layout.num_col_tiles_at_level(2) == ceil((float)c1 / (float)c2) &&
+      layout.num_row_tiles_at_level(3) == ceil((float)r2 / (float)r3) &&
+      layout.num_col_tiles_at_level(3) == ceil((float)c2 / (float)c3)) {
+    success[2] = 1;
+  } else {
+    printf("FAILED\n");
+    printf("(%d,%d), (%d,%d), (%d,%d), (%d,%d)\n", r0, c0, r1, c1, r2, c2, r3,
+           c3);
+    printf("(%d,%d), (%d,%d), (%d,%d), (%d,%d)\n",
+           layout.num_row_tiles_at_level(0), layout.num_col_tiles_at_level(0),
+           layout.num_row_tiles_at_level(1), layout.num_col_tiles_at_level(1),
+           layout.num_row_tiles_at_level(2), layout.num_col_tiles_at_level(2),
+           layout.num_row_tiles_at_level(3), layout.num_col_tiles_at_level(3));
+    success[2] = 0;
     return;
   }
 }
@@ -173,7 +197,7 @@ __global__ void tile_test(int* success) {
 
 TEST(TileSetupTest, SetupTest) {
   // Set up cuda vectors
-  thrust::device_vector<int> success_d(2);
+  thrust::device_vector<int> success_d(3);
 
   // Run kernel
   tile_test<<<1, 1>>>(success_d.data().get());
@@ -184,4 +208,5 @@ TEST(TileSetupTest, SetupTest) {
   // Google test assert success == 1
   ASSERT_EQ(success_d[0], 1);
   ASSERT_EQ(success_d[1], 1);
+  ASSERT_EQ(success_d[2], 1);
 }
