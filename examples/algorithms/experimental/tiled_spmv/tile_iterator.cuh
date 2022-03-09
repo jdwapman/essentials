@@ -16,39 +16,37 @@ struct Point {
       : row(_row), col(_col) {}
 };
 
-template <typename row_t, typename col_t, typename parent_t, int hierarchy>
+template <typename tiledata_t>
 struct TileIdx {
-  row_t row;
-  col_t col;
-  parent_t parent;
+  tiledata_t tiledata;
 
-  __host__ __device__ __forceinline__ TileIdx(row_t _row,
-                                              col_t _col,
-                                              parent_t _parent)
-      : row(_row), col(_col), parent(_parent) {}
-
-  __host__ __device__ __forceinline__ constexpr bool operator==(
-      const int comparare_hierarchy) const {
-    return hierarchy == comparare_hierarchy;
-  }
+  __host__ __device__ __forceinline__ TileIdx(tiledata_t _tileddata)
+      : tiledata(_tileddata) {}
 
   __host__ __device__ __forceinline__ constexpr auto getHierarchy() const {
-    return hierarchy;
+    return std::tuple_size<tiledata_t>::value - 1;
   }
 };
 
 template <typename row_t, typename col_t>
 __host__ __device__ __forceinline__ constexpr auto make_tile_index(row_t row,
                                                                    col_t col) {
-  std::tuple<> blank_tuple;
-  return TileIdx<row_t, col_t, std::tuple<>, 0>(row, col, blank_tuple);
+  std::tuple<row_t, col_t> tiledata{row, col};
+  std::tuple<decltype(tiledata)> tiledata_wrapper{tiledata};
+  return TileIdx<decltype(tiledata_wrapper)>(tiledata_wrapper);
 }
 
-template <typename row_t, typename col_t, typename parent_t>
+template <typename row_t, typename col_t, typename parentdata_t>
 __host__ __device__ __forceinline__ constexpr auto
-make_tile_index(row_t row, col_t col, parent_t parent) {
-  return TileIdx<row_t, col_t, parent_t, parent.getHierarchy() + 1>(row, col,
-                                                                    parent);
+make_tile_index(row_t row, col_t col, parentdata_t parentdata) {
+  std::tuple<row_t, col_t> tiledata{row, col};
+  std::tuple<decltype(tiledata)> tiledata_wrapper{tiledata};
+
+  // concatenate parentlayout and tiledim tuples
+  auto tiledata_wrapper_nested =
+      std::tuple_cat(parentdata.tiledata, tiledata_wrapper);
+
+  return TileIdx<decltype(tiledata_wrapper_nested)>(tiledata_wrapper_nested);
 }
 
 // NOTE: Need to store layout data as a tuple.
@@ -184,38 +182,41 @@ class Layout {
   }
 
   // Not constexpr since the point changes at runtime
-  // template <typename point_t, typename tile_index_t, typename hierarchy_t>
-  // __device__ __forceinline__ auto remap_point(point_t point,
-  //                                             tile_index_t tile_index,
-  //                                             hierarchy_t goal_hierarchy) {
-  //   if (tile_index.getHierarchy() < goal_hierarchy) {
-  //     // Going from a big tile to a small tile
+  template <typename point_t, typename tile_index_t, typename hierarchy_t>
+  __device__ __forceinline__ auto remap_point(point_t point,
+                                              tile_index_t tile_index,
+                                              hierarchy_t goal_hierarchy) {
+    if (tile_index.getHierarchy() < goal_hierarchy) {
+      auto new_point = point;
 
-  //     Point smaller_point(
-  //         point.row % rows_in_tile(tile_index.getHierarchy() + 1),
-  //         point.col % cols_in_tile(tile_index.getHierarchy()) + 1);
+#pragma unroll
+      for (auto h_idx = tile_index.getHierarchy(); h_idx < goal_hierarchy;
+           h_idx++) {
+        new_point.row %= rows_in_tile(h_idx + 1);
+        new_point.col %= cols_in_tile(h_idx + 1);
+      }
 
-  //     auto smaller_tile_idx = make_tile_idx(
-  //         point.row / rows_in_tile(tile_index.getHierarchy() + 1),
-  //         point.col / cols_in_tile(tile_index.getHierarchy() + 1),
-  //         tile_index);
+      return new_point;
 
-  //     return remap_point(smaller_point, smaller_tile_idx, goal_hierarchy);
+    } else if (tile_index.getHierarchy() > goal_hierarchy) {
+      auto new_point = point;
+      // Going from a small to a big tile
+#pragma unroll
+      for (auto h_idx = tile_index.getHierarchy(); h_idx > goal_hierarchy;
+           h_idx--) {
+        new_point.row +=
+            std::get<0>(TupleReturnValue((size_t)h_idx, tile_index.tiledata)) *
+            rows_in_tile(h_idx);
+        new_point.col +=
+            std::get<1>(TupleReturnValue((size_t)h_idx, tile_index.tiledata)) *
+            cols_in_tile(h_idx);
+      }
 
-  //   } else if (tile_index.getHierarchy() > goal_hierarchy) {
-  //     // Going from a small to a big tile
-  //     Point larger_point(
-  //         point.row + tile_index.row *
-  //         rows_in_tile(tile_index.getHierarchy()), point.col + tile_index.col
-  //         * cols_in_tile(tile_index.getHierarchy()));
-
-  //     auto larger_tile_idx = tile_index.parent;
-
-  //     return remap_point(larger_point, larger_tile_idx, goal_hierarchy);
-  //   } else {
-  //     return point;
-  //   }
-  // }
+      return new_point;
+    } else {
+      return point;
+    }
+  }
 
   tiledim_t tiledims;
 };
