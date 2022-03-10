@@ -26,47 +26,44 @@ struct Point {
 };
 
 // TODO need to rewrite this to be runtime-modifiable (no tuples)
-template <typename tiledata_t>
+template <typename row_t, typename col_t, int hierarchy>
 struct TileIdx {
-  tiledata_t tiledata;
+  row_t row[hierarchy + 1];
+  col_t col[hierarchy + 1];
 
-  __host__ __device__ __forceinline__ TileIdx(tiledata_t _tileddata)
-      : tiledata(_tileddata) {}
+  __host__ __device__ __forceinline__ TileIdx(row_t _row, col_t _col) {
+    row[0] = _row;
+    col[0] = _col;
+  }
+
+  __host__ __device__ __forceinline__ TileIdx(row_t _row,
+                                              col_t _col,
+                                              row_t* _parent_rows,
+                                              col_t* _parent_cols) {
+    row[hierarchy] = _row;
+    col[hierarchy] = _col;
+    for (int i = hierarchy - 1; i >= 0; i--) {
+      row[i] = _parent_rows[i];
+      col[i] = _parent_cols[i];
+    }
+  }
 
   __host__ __device__ __forceinline__ constexpr auto getHierarchy() const {
-    return std::tuple_size<tiledata_t>::value - 1;
-  }
-
-  __host__ __device__ __forceinline__ auto& row() {
-    auto& tilerow = std::get<getHierarchy()>(tiledata);
-    return std::get<0>(tilerow);
-  }
-
-  __host__ __device__ __forceinline__ auto& col() {
-    auto& tilecol = std::get<getHierarchy()>(tilecol);
-    return std::get<0>(tilecol);
+    return hierarchy;
   }
 };
 
 template <typename row_t, typename col_t>
 __host__ __device__ __forceinline__ constexpr auto make_tile_index(row_t row,
                                                                    col_t col) {
-  std::tuple<row_t, col_t> tiledata{row, col};
-  std::tuple<decltype(tiledata)> tiledata_wrapper{tiledata};
-  return TileIdx<decltype(tiledata_wrapper)>(tiledata_wrapper);
+  return TileIdx<row_t, col_t, 0>(row, col);
 }
 
-template <typename row_t, typename col_t, typename parentdata_t>
+template <typename row_t, typename col_t, typename parenttile_t>
 __host__ __device__ __forceinline__ constexpr auto
-make_tile_index(row_t row, col_t col, parentdata_t parentdata) {
-  std::tuple<row_t, col_t> tiledata{row, col};
-  std::tuple<decltype(tiledata)> tiledata_wrapper{tiledata};
-
-  // concatenate parentlayout and tiledim tuples
-  auto tiledata_wrapper_nested =
-      std::tuple_cat(parentdata.tiledata, tiledata_wrapper);
-
-  return TileIdx<decltype(tiledata_wrapper_nested)>(tiledata_wrapper_nested);
+make_tile_index(row_t row, col_t col, parenttile_t parenttile) {
+  return TileIdx<row_t, col_t, parenttile.getHierarchy() + 1>(
+      row, col, parenttile.row, parenttile.col);
 }
 
 // NOTE: Need to store layout data as a tuple.
@@ -224,12 +221,8 @@ class Layout {
 #pragma unroll
       for (auto h_idx = tile_index.getHierarchy(); h_idx > goal_hierarchy;
            h_idx--) {
-        new_point.row +=
-            std::get<0>(TupleReturnValue((size_t)h_idx, tile_index.tiledata)) *
-            rows_in_tile(h_idx);
-        new_point.col +=
-            std::get<1>(TupleReturnValue((size_t)h_idx, tile_index.tiledata)) *
-            cols_in_tile(h_idx);
+        new_point.row += tile_index.row[h_idx] * rows_in_tile(h_idx);
+        new_point.col += tile_index.col[h_idx] * cols_in_tile(h_idx);
       }
 
       return new_point;
@@ -345,8 +338,10 @@ class TileIterator {
   template <typename tile_index_t>
   __device__ __forceinline__ void process_all_tiles_at_hierarchy(
       tile_index_t parent_tile_idx) {
-    print_device("Processing tile (%d, %d)\n", (int)parent_tile_idx.row,
-                 (int)parent_tile_idx.col);
+    print_device("Processing tile (%d, %d) at %d\n",
+                 (int)parent_tile_idx.row[parent_tile_idx.getHierarchy()],
+                 (int)parent_tile_idx.col[parent_tile_idx.getHierarchy()],
+                 (int)parent_tile_idx.getHierarchy());
 
     // ===== SETUP TASKS ===== //
     if constexpr (parent_tile_idx.getHierarchy() == TILE_DEVICE_BATCH) {
@@ -360,22 +355,24 @@ class TileIterator {
       // process_tile(parent_tile_idx);
     } else {
       // Tile indexer to the child tiles if the parent tile
-      //       auto child_tile_idx = make_tile_index(0, 0, parent_tile_idx);
+      auto child_tile_idx = make_tile_index(0, 0, parent_tile_idx);
 
-      // // Iterate over the child tiles
-      // #pragma unroll
-      //       for (child_tile_idx.row == 0;
-      //            child_tile_idx.row <
-      //            tile_layout.num_child_row_tiles(parent_tile_idx);
-      //            child_tile_idx.row++) {
-      // #pragma unroll
-      //         for (child_tile_idx.col = 0;
-      //              child_tile_idx.col <
-      //              tile_layout.num_child_col_tiles(parent_tile_idx);
-      //              child_tile_idx.col++) {
-      //           process_all_tiles_at_hierarchy(child_tile_idx);
-      //         }
-      //       }
+      auto h_idx = child_tile_idx.getHierarchy();
+
+      // Iterate over the child tiles
+#pragma unroll
+      for (child_tile_idx.row[h_idx] == 0;
+           child_tile_idx.row[h_idx] <
+           tile_layout.num_child_row_tiles(parent_tile_idx);
+           child_tile_idx.row[h_idx]++) {
+#pragma unroll
+        for (child_tile_idx.col[h_idx] = 0;
+             child_tile_idx.col[h_idx] <
+             tile_layout.num_child_col_tiles(parent_tile_idx);
+             child_tile_idx.col[h_idx]++) {
+          process_all_tiles_at_hierarchy(child_tile_idx);
+        }
+      }
     }
 
     // ===== TEARDOWN TASKS ===== //
