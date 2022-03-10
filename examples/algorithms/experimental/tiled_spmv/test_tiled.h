@@ -45,17 +45,17 @@ __global__ void spmv_tiled_kernel(graph_t graph,
   matrix_tile_iterator.process_all_tiles();
 
   // Simple, single-threaded implementation
-  if (blockIdx.x == 0 && threadIdx.x == 0) {
-    for (auto i = 0; i < graph.get_number_of_rows(); i++) {
-      vector_t y = 0;
-      for (auto k = graph.get_row_offsets()[i];
-           k < graph.get_row_offsets()[i + 1]; k++) {
-        y = y + (graph.get_nonzero_values()[k] *
-                 input[graph.get_column_indices()[k]]);
-      }
-      output[i] = y;
-    }
-  }
+  // if (blockIdx.x == 0 && threadIdx.x == 0) {
+  //   for (auto i = 0; i < graph.get_number_of_rows(); i++) {
+  //     vector_t y = 0;
+  //     for (auto k = graph.get_row_offsets()[i];
+  //          k < graph.get_row_offsets()[i + 1]; k++) {
+  //       y = y + (graph.get_nonzero_values()[k] *
+  //                input[graph.get_column_indices()[k]]);
+  //     }
+  //     output[i] = y;
+  //   }
+  // }
 }
 
 template <typename csr_t, typename vector_t>
@@ -184,7 +184,7 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   gunrock::util::timer_t timer;
   timer.begin();
   CHECK_CUDA(cudaLaunchCooperativeKernel(
-      (void*)spmv_tiled_kernel<decltype(G), float>, dimGrid, dimBlock,
+      (void*)spmv_tiled_kernel<decltype(G), float>, 1, 1,
       kernelArgs, shmemPerBlock, stream));
 
   CHECK_CUDA(cudaDeviceSynchronize());

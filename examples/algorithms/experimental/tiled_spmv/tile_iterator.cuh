@@ -274,7 +274,7 @@ class TileIterator {
         tile_layout(_tile_layout) {
     // TODO make sure shmem is aligned
     shmem_row_offsets = shmem;
-    // shmem_output = &shmem[tile_row_size];
+    shmem_output = &shmem_row_offsets[tile_layout.rows_in_tile(TILE_BLOCK)];
 
     // print_device("shmem_size: %d\n", (int)shmem_size);
     // print_device("tile_row_size: %d\n", (int)tile_row_size);
@@ -282,8 +282,9 @@ class TileIterator {
 
   template <typename tile_index_t>
   __device__ __forceinline__ void load_tile(tile_index_t parent_tile_idx) {
-    // Save the row offsets to shared memory and initialize the outputs to 0
-    // Load data into shared memory
+    // if (threadIdx.x == 0 && blockIdx.x == 0) {
+    //   printf("Loading data into shared memory\n");
+    // }
 
     // If we're loading the first tile in a batch, the device tile is by
     // default  (0, 0) relative to the parent
@@ -291,13 +292,6 @@ class TileIterator {
 
     // Then, we need to get the block idx relative to the device tile
     auto block_tile_idx = make_tile_index((int)blockIdx.x, 0, device_tile_idx);
-
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-      printf("Loading data into shared memory\n");
-    }
-
-    // Then iterate over the number of rows in the block
-    // NOTE: Use ampere async copy
     auto rows_in_block = tile_layout.rows_in_tile(block_tile_idx);
 
     // Convert coordinates relative to one tile to coordinates relative to
@@ -307,32 +301,143 @@ class TileIterator {
     auto matrix_coord = tile_layout.remap_point(
         Point<int, int>(0, 0), block_tile_idx, (size_t)TILE_MATRIX);
 
-    if (threadIdx.x == 0) {
-      printf("Got remapped point %d, %d\n", (int)matrix_coord.row,
-             (int)matrix_coord.col);
+// Get the boundaries of the tile: the minimum of the number of rows in
+// the block and the remainder of the number of rows in graph
+
+// Iterate and copy to shared
+// TODO convert to ampere async copy
+// TODO use vector loads?
+#pragma unroll
+    for (auto row_idx = threadIdx.x;
+         row_idx < rows_in_block &&
+         matrix_coord.row + row_idx < graph.get_number_of_rows();
+         row_idx += blockDim.x) {
+      // Copy the row offset to shared memory
+      this->shmem_row_offsets[row_idx] =
+          this->graph.get_row_offsets()[matrix_coord.row + row_idx];
+      this->shmem_output[row_idx] = 0;
     }
 
-    // Iterate and copy to shared
-    // TODO convert to ampere async copy
-    // TODO unroll this
-    // for (size_t row_idx = threadIdx.x; row_idx < rows_in_block;
-    //      row_idx += blockDim.x) {
-    //   // Copy the row offset to shared memory
-    //   this->shmem_row_offsets[row_idx] =
-    //       this->graph.get_row_offsets()[matrix_idx.row + row_idx];
-    //   this->shmem_output[row_idx] = 0;
-    // }
+    if (matrix_coord.row + rows_in_block <= graph.get_number_of_rows()) {
+      next_tile_offset =
+          graph.get_row_offsets()[matrix_coord.row + rows_in_block];
+    }
   }
 
   template <typename tile_index_t>
-  __device__ __forceinline__ void process_tile(tile_index_t parent_tile_idx) {}
+  __device__ __forceinline__ void process_tile(tile_index_t parent_tile_idx) {
+    // if (threadIdx.x == 0 && blockIdx.x == 0) {
+    //   printf("Processing tile\n");
+    // }
+
+    // If we're loading the first tile in a batch, the device tile is by
+    // default  (0, 0) relative to the parent
+    auto device_tile_idx = make_tile_index(0, 0, parent_tile_idx);
+
+    // Then, we need to get the block idx relative to the device tile
+    auto block_tile_idx = make_tile_index((int)blockIdx.x, 0, device_tile_idx);
+    auto rows_in_block = tile_layout.rows_in_tile(block_tile_idx);
+    auto cols_in_block = tile_layout.cols_in_tile(block_tile_idx);
+
+    // Convert coordinates relative to one tile to coordinates relative to
+    // another tile. Note that we need to use block_tile_idx since it has
+    // references to its parents.
+
+    auto matrix_coord = tile_layout.remap_point(
+        Point<int, int>(0, 0), block_tile_idx, (size_t)TILE_MATRIX);
+
+    printf("Row 0 has %d nonzeros\n", (int)graph.get_number_of_neighbors(0));
+
+    // Do the SPMV
+    // 1. Iterate over the rows in the block
+#pragma unroll
+    for (auto row_idx = threadIdx.x;
+         row_idx < rows_in_block &&
+         matrix_coord.row + row_idx < graph.get_number_of_rows();
+         row_idx += blockDim.x) {
+      // printf("Block %d, Thread %d processing row %d\n", (int)blockIdx.x,
+      //        (int)threadIdx.x, (int)(matrix_coord.row + row_idx));
+
+      // 2. Within a row, iterate over the rows in the block until we reach
+      //    either the end of the tile or the end of the matrix
+      vector_t accum = this->shmem_output[row_idx];
+
+      auto tile_boundary =
+          min(graph.get_number_of_columns(),
+              (parent_tile_idx.col[TILE_DEVICE] + 1) * cols_in_block);
+
+      auto offset = this->shmem_row_offsets[row_idx];
+
+      
+
+      auto last_col = -1;
+      while (true) {
+        auto col = this->graph.get_column_indices()[offset];
+
+        if ((int)col >= (int)tile_boundary) {
+          break;
+        }
+
+        // Handle when the cols wrap back around
+        // TODO running into a problem where I need to know the max number of
+        // nonzeros in the row
+        if (last_col >= col) {
+          break;
+        }
+
+        accum += this->graph.get_nonzero_values()[offset] * this->input[col];
+
+        if (row_idx == 0) {
+          printf("accum: %f, offset: %d, col: %d, input: %f\n", accum, offset,
+                 col, this->input[col]);
+        }
+
+        offset++;
+
+        last_col = col;
+      }
+
+      // Save the offset and values for the next iterations
+      this->shmem_row_offsets[row_idx] = offset;
+      this->shmem_output[row_idx] = accum;
+    }
+  }
 
   template <typename tile_index_t>
   __device__ __forceinline__ void store_tile(tile_index_t parent_tile_idx) {
     // Write the outputs to the output vector
     // Unload data from shared memory
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-      printf("Unloading data from shared memory\n");
+    // if (threadIdx.x == 0 && blockIdx.x == 0) {
+    //   printf("Unloading data from shared memory\n");
+    // }
+
+    // Save the row offsets to shared memory and initialize the outputs to 0
+    // Load data into shared memory
+
+    // If we're loading the first tile in a batch, the device tile is by
+    // default  (0, 0) relative to the parent
+    auto device_tile_idx = make_tile_index(0, 0, parent_tile_idx);
+
+    // Then, we need to get the block idx relative to the device tile
+    auto block_tile_idx = make_tile_index((int)blockIdx.x, 0, device_tile_idx);
+    auto rows_in_block = tile_layout.rows_in_tile(block_tile_idx);
+
+    // Convert coordinates relative to one tile to coordinates relative to
+    // another tile. Note that we need to use block_tile_idx since it has
+    // references to its parents.
+
+    auto matrix_coord = tile_layout.remap_point(
+        Point<int, int>(0, 0), block_tile_idx, (size_t)TILE_MATRIX);
+
+// Iterate and copy to global
+// TODO make this vectorized?
+#pragma unroll
+    for (auto row_idx = threadIdx.x;
+         row_idx < rows_in_block &&
+         matrix_coord.row + row_idx < graph.get_number_of_rows();
+         row_idx += blockDim.x) {
+      // Write the outputs to the output vector
+      output[row_idx] = this->shmem_output[row_idx];
     }
   }
 
@@ -362,7 +467,7 @@ class TileIterator {
 
       // Iterate over the child tiles
 #pragma unroll
-      for (child_tile_idx.row[h_idx] == 0;
+      for (child_tile_idx.row[h_idx] = 0;
            child_tile_idx.row[h_idx] <
            tile_layout.num_child_row_tiles(parent_tile_idx);
            child_tile_idx.row[h_idx]++) {
@@ -394,6 +499,8 @@ class TileIterator {
   vector_t* output;
   shmem_t* shmem;
   const size_t shmem_size;
+
+  const size_t next_tile_offset;
 
   shmem_t* shmem_row_offsets;
   shmem_t* shmem_output;
