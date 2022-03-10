@@ -6,7 +6,16 @@
 #define TILE_MATRIX 0
 #define TILE_DEVICE_BATCH 1
 #define TILE_DEVICE 2
-#define TILE_BLOCK 343
+#define TILE_BLOCK 3
+
+// Forward declare
+template <typename rowdim_t, typename coldim_t>
+__host__ __device__ __forceinline__ constexpr auto make_layout(rowdim_t rowdim,
+                                                               coldim_t coldim);
+
+template <typename rowdim_t, typename coldim_t, typename parentlayout_t>
+__host__ __device__ __forceinline__ constexpr auto
+make_layout(rowdim_t rowdim, coldim_t coldim, parentlayout_t parentlayout);
 
 template <typename row_t, typename col_t>
 struct Point {
@@ -16,6 +25,7 @@ struct Point {
       : row(_row), col(_col) {}
 };
 
+// TODO need to rewrite this to be runtime-modifiable (no tuples)
 template <typename tiledata_t>
 struct TileIdx {
   tiledata_t tiledata;
@@ -25,6 +35,16 @@ struct TileIdx {
 
   __host__ __device__ __forceinline__ constexpr auto getHierarchy() const {
     return std::tuple_size<tiledata_t>::value - 1;
+  }
+
+  __host__ __device__ __forceinline__ auto& row() {
+    auto& tilerow = std::get<getHierarchy()>(tiledata);
+    return std::get<0>(tilerow);
+  }
+
+  __host__ __device__ __forceinline__ auto& col() {
+    auto& tilecol = std::get<getHierarchy()>(tilecol);
+    return std::get<0>(tilecol);
   }
 };
 
@@ -63,7 +83,7 @@ class Layout {
   __host__ __device__ __forceinline__ constexpr auto tile(
       const rowdim_t rowdim,
       const coldim_t coldim) {
-    return make_layout(rowdim, coldim, this->tiledims);
+    return make_layout(rowdim, coldim, *this);
   }
 
   __host__ __device__ __forceinline__ constexpr bool has_parent() const {
@@ -269,87 +289,58 @@ class TileIterator {
     // print_device("tile_row_size: %d\n", (int)tile_row_size);
   }
 
-  // __device__ __forceinline__ void load_tile(TileIdx parent_tile_idx) {
-  //   // Save the row offsets to shared memory and initialize the outputs to
-  //   0
-  //   // Load data into shared memory
+  template <typename tile_index_t>
+  __device__ __forceinline__ void load_tile(tile_index_t parent_tile_idx) {
+    // Save the row offsets to shared memory and initialize the outputs to 0
+    // Load data into shared memory
 
-  //   // If we're loading the first tile in a batch, the device tile is by
-  //   default
-  //       // (0, 0) relative to the parent
-  //       TileIdx device_tile_idx(0, 0, &parent_tile_idx);
+    // If we're loading the first tile in a batch, the device tile is by
+    // default  (0, 0) relative to the parent
+    auto device_tile_idx = make_tile_index(0, 0, parent_tile_idx);
 
-  //   // Then, we need to get the block idx relative to the device tile
-  //   TileIdx block_tile_idx(blockIdx.x, 0, &device_tile_idx);
+    // Then, we need to get the block idx relative to the device tile
+    auto block_tile_idx = make_tile_index(blockIdx.x, 0, device_tile_idx);
 
-  //   if (threadIdx.x == 0 && blockIdx.x == 0) {
-  //     printf("Loading data into shared memory\n");
-  //   }
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+      printf("Loading data into shared memory\n");
+    }
 
-  //   // Then iterate over the number of rows in the block
-  //   // NOTE: Use ampere async copy
-  //   size_t rows_in_block = this->tile_indexer.rows_in_tile(block_tile_idx);
+    // Then iterate over the number of rows in the block
+    // NOTE: Use ampere async copy
+    auto rows_in_block = tile_layout.rows_in_tile(block_tile_idx);
 
-  //   // Convert coordinates relative to one tile to coordinates relative to
-  //   // another tile. Note that we need to use block_tile_idx since it has
-  //   // references to its parents.
-  //   Point matrix_idx = this->tile_indexer.convert_index(
-  //       Point(0, 0), &block_tile_idx, (size_t)TILE_MATRIX);
+    // Convert coordinates relative to one tile to coordinates relative to
+    // another tile. Note that we need to use block_tile_idx since it has
+    // references to its parents.
+    auto matrix_idx = this->tile_indexer.convert_index(
+        Point(0, 0), &block_tile_idx, (size_t)TILE_MATRIX);
 
-  //   // Iterate and copy to shared
-  //   // TODO convert to ampere async copy
-  //   // TODO unroll this
-  //   for (size_t row_idx = threadIdx.x; row_idx < rows_in_block;
-  //        row_idx += blockDim.x) {
-  //     // Copy the row offset to shared memory
-  //     this->shmem_row_offsets[row_idx] =
-  //         this->graph.get_row_offsets()[matrix_idx.row + row_idx];
-  //     this->shmem_output[row_idx] = 0;
-  //   }
-  // }
+    auto matrix_coord = tile_layout.remap_point(
+        Point<int, int>(0, 0), matrix_idx, (size_t)TILE_MATRIX);
 
-  // __device__ __forceinline__ void process_tile(TileIdx parent_tile_idx) {
-  //   // Iterate over sub tiles
-  //   // Basically, here we need another tile iterator. This time for
-  //   "device"
-  //   // tiles. These _should_ be really easy to implement
-  // }
+    // Iterate and copy to shared
+    // TODO convert to ampere async copy
+    // TODO unroll this
+    // for (size_t row_idx = threadIdx.x; row_idx < rows_in_block;
+    //      row_idx += blockDim.x) {
+    //   // Copy the row offset to shared memory
+    //   this->shmem_row_offsets[row_idx] =
+    //       this->graph.get_row_offsets()[matrix_idx.row + row_idx];
+    //   this->shmem_output[row_idx] = 0;
+    // }
+  }
 
-  // __device__ __forceinline__ void store_tile(TileIdx parent_tile_idx) {
-  //   // Write the outputs to the output vector
-  //   // Unload data from shared memory
-  //   if (threadIdx.x == 0 && blockIdx.x == 0) {
-  //     printf("Unloading data from shared memory\n");
-  //   }
+  template <typename tile_index_t>
+  __device__ __forceinline__ void process_tile(tile_index_t parent_tile_idx) {}
 
-  //   // If we're unloading the last tile in a batch, the device tile is by
-  //   // default (0, N-1) relative to the parent
-  //   TileIdx device_tile_idx(
-  //       0, this->tile_indexer.num_child_tiles_col(TILE_MATRIX) - 1,
-  //       &parent_tile_idx);
-
-  //   // Then, we need to get the block idx relative to the device tile
-  //   TileIdx block_tile_idx(blockIdx.x, 0, &device_tile_idx);
-
-  //   // Then iterate over the number of rows in the block
-  //   size_t rows_in_block = this->tile_indexer.rows_in_tile(block_tile_idx);
-
-  //   // Convert coordinates relative to one tile to coordinates relative to
-  //   // another tile. Note that we need to use block_tile_idx since it has
-  //   // references to its parents.
-  //   Point matrix_idx = this->tile_indexer.convert_index(
-  //       Point(0, 0), &block_tile_idx, (size_t)TILE_MATRIX);
-
-  //   // Iterate and copy from shared to global
-  //   for (size_t row_idx = threadIdx.x; row_idx < rows_in_block;
-  //        row_idx += blockDim.x) {
-  //     this->graph.get_row_offsets()[matrix_idx.row + row_idx] =
-  //         this->shmem_row_offsets[row_idx];
-
-  //     // this->output[matrix_idx.row + row_idx] =
-  //     this->shmem_output[row_idx];
-  //   }
-  // }
+  template <typename tile_index_t>
+  __device__ __forceinline__ void store_tile(tile_index_t parent_tile_idx) {
+    // Write the outputs to the output vector
+    // Unload data from shared memory
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+      printf("Unloading data from shared memory\n");
+    }
+  }
 
   template <typename tile_index_t>
   __device__ __forceinline__ void process_all_tiles_at_hierarchy(
@@ -358,37 +349,37 @@ class TileIterator {
                  (int)parent_tile_idx.col);
 
     // ===== SETUP TASKS ===== //
-    if constexpr (parent_tile_idx == TILE_DEVICE_BATCH) {
+    if constexpr (parent_tile_idx.getHierarchy() == TILE_DEVICE_BATCH) {
       // load_tile(parent_tile_idx);
     }
 
     // ===== TILE PROCESSING TASKS ===== //
-    if constexpr (parent_tile_idx == TILE_DEVICE) {
+    if constexpr (parent_tile_idx.getHierarchy() == TILE_DEVICE) {
       // We aren't iterating over the tile anymore, we're now processing it
       // and diving into parallel work
       // process_tile(parent_tile_idx);
     } else {
       // Tile indexer to the child tiles if the parent tile
-      auto child_tile_idx = make_tile_index(0, 0, parent_tile_idx);
+      //       auto child_tile_idx = make_tile_index(0, 0, parent_tile_idx);
 
-// Iterate over the child tiles
-#pragma unroll
-      for (child_tile_idx.row == 0;
-           child_tile_idx.row <
-           tile_layout.num_child_row_tiles(parent_tile_idx);
-           child_tile_idx.row++) {
-#pragma unroll
-        for (child_tile_idx.col = 0;
-             child_tile_idx.col <
-             tile_layout.num_child_col_tiles(parent_tile_idx);
-             child_tile_idx.col++) {
-          process_all_tiles_at_hierarchy(child_tile_idx);
-        }
-      }
+      // // Iterate over the child tiles
+      // #pragma unroll
+      //       for (child_tile_idx.row == 0;
+      //            child_tile_idx.row <
+      //            tile_layout.num_child_row_tiles(parent_tile_idx);
+      //            child_tile_idx.row++) {
+      // #pragma unroll
+      //         for (child_tile_idx.col = 0;
+      //              child_tile_idx.col <
+      //              tile_layout.num_child_col_tiles(parent_tile_idx);
+      //              child_tile_idx.col++) {
+      //           process_all_tiles_at_hierarchy(child_tile_idx);
+      //         }
+      //       }
     }
 
     // ===== TEARDOWN TASKS ===== //
-    if constexpr (parent_tile_idx == TILE_DEVICE_BATCH) {
+    if constexpr (parent_tile_idx.getHierarchy() == TILE_DEVICE_BATCH) {
       // store_tile(parent_tile_idx);
     }
   }

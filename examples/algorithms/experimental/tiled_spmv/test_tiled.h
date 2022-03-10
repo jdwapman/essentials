@@ -27,20 +27,22 @@ __global__ void spmv_tiled_kernel(graph_t graph,
 
   // Set up the tiles
 
-  // auto base_layout =
-  //     make_layout(graph.get_number_of_rows(), graph.get_number_of_columns());
-  // auto device_batch_tiled_layout = base_layout.tile(
-  //     tile_row_size * blockDim.x, graph.get_number_of_columns());
-  // auto device_tiled_layout =
-  //     device_batch_tiled_layout.tile(tile_row_size * blockDim.x, tile_col_size);
-  // auto block_tiled_layout =
-  //     device_tiled_layout.tile(tile_row_size, tile_col_size);
+  auto base_layout =
+      make_layout(graph.get_number_of_rows(), graph.get_number_of_columns());
+  auto device_batch_tiled_layout = base_layout.tile(
+      tile_row_size * blockDim.x, graph.get_number_of_columns());
+  auto device_tiled_layout =
+      device_batch_tiled_layout.tile(tile_row_size * blockDim.x, tile_col_size);
+  auto block_tiled_layout =
+      device_tiled_layout.tile(tile_row_size, tile_col_size);
 
-  // TileIterator<graph_t, vector_t, row_t, decltype(block_tiled_layout)>
-  //     matrix_tile_iterator(graph, input, output, shmem, shmem_size,
-  //                          block_tiled_layout);
+  auto dims = block_tiled_layout.tiledims;
 
-  // matrix_tile_iterator.process_all_tiles();
+  TileIterator<graph_t, vector_t, row_t, decltype(block_tiled_layout)>
+      matrix_tile_iterator(graph, input, output, shmem, shmem_size,
+                           block_tiled_layout);
+
+  matrix_tile_iterator.process_all_tiles();
 
   // Simple, single-threaded implementation
   if (blockIdx.x == 0 && threadIdx.x == 0) {
