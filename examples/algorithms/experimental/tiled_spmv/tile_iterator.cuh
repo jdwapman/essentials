@@ -107,18 +107,16 @@ class Layout {
     return std::get<1>(tiledim);
   }
 
-  template <typename layout_t, typename tile_index_t>
+  template <typename tile_index_t>
   __device__ __forceinline__ constexpr auto rows_in_tile(
-      const layout_t layout,
       const tile_index_t tile_index) const {
-    return rows_in_tile(layout, tile_index.getHierarchy());
+    return rows_in_tile(tile_index.getHierarchy());
   }
 
-  template <typename layout_t, typename tile_index_t>
+  template <typename tile_index_t>
   __device__ __forceinline__ constexpr auto cols_in_tile(
-      const layout_t layout,
       const tile_index_t tile_index) const {
-    return cols_in_tile(layout, tile_index.getHierarchy());
+    return cols_in_tile(tile_index.getHierarchy());
   }
 
   // Get the number of child tiles
@@ -292,7 +290,7 @@ class TileIterator {
     auto device_tile_idx = make_tile_index(0, 0, parent_tile_idx);
 
     // Then, we need to get the block idx relative to the device tile
-    auto block_tile_idx = make_tile_index(blockIdx.x, 0, device_tile_idx);
+    auto block_tile_idx = make_tile_index((int)blockIdx.x, 0, device_tile_idx);
 
     if (threadIdx.x == 0 && blockIdx.x == 0) {
       printf("Loading data into shared memory\n");
@@ -305,11 +303,14 @@ class TileIterator {
     // Convert coordinates relative to one tile to coordinates relative to
     // another tile. Note that we need to use block_tile_idx since it has
     // references to its parents.
-    auto matrix_idx = this->tile_indexer.convert_index(
-        Point(0, 0), &block_tile_idx, (size_t)TILE_MATRIX);
 
     auto matrix_coord = tile_layout.remap_point(
-        Point<int, int>(0, 0), matrix_idx, (size_t)TILE_MATRIX);
+        Point<int, int>(0, 0), block_tile_idx, (size_t)TILE_MATRIX);
+
+    if (threadIdx.x == 0) {
+      printf("Got remapped point %d, %d\n", (int)matrix_coord.row,
+             (int)matrix_coord.col);
+    }
 
     // Iterate and copy to shared
     // TODO convert to ampere async copy
@@ -345,14 +346,14 @@ class TileIterator {
 
     // ===== SETUP TASKS ===== //
     if constexpr (parent_tile_idx.getHierarchy() == TILE_DEVICE_BATCH) {
-      // load_tile(parent_tile_idx);
+      load_tile(parent_tile_idx);
     }
 
     // ===== TILE PROCESSING TASKS ===== //
     if constexpr (parent_tile_idx.getHierarchy() == TILE_DEVICE) {
       // We aren't iterating over the tile anymore, we're now processing it
       // and diving into parallel work
-      // process_tile(parent_tile_idx);
+      process_tile(parent_tile_idx);
     } else {
       // Tile indexer to the child tiles if the parent tile
       auto child_tile_idx = make_tile_index(0, 0, parent_tile_idx);
@@ -377,7 +378,7 @@ class TileIterator {
 
     // ===== TEARDOWN TASKS ===== //
     if constexpr (parent_tile_idx.getHierarchy() == TILE_DEVICE_BATCH) {
-      // store_tile(parent_tile_idx);
+      store_tile(parent_tile_idx);
     }
   }
 
