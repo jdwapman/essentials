@@ -60,8 +60,6 @@ __global__ void spmv_tiled_kernel(graph_t graph,
 
 template <typename csr_t, typename vector_t>
 double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
-  auto debug = false;
-
   // --
   // Build graph
 
@@ -102,13 +100,8 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   numThreadsPerBlock = deviceProp.maxThreadsPerBlock / target_occupancy;
   shmemPerBlock = (deviceProp.sharedMemPerBlockOptin / target_occupancy);
 
-  auto store_end_offsets_in_shmem = true;
-
-  auto data_elems_per_row = 1;
-  if (store_end_offsets_in_shmem) {
-    data_elems_per_row = 2;
-  }
-  auto rows_per_block = (shmemPerBlock / (sizeof(row_t) * data_elems_per_row));
+  auto bytes_per_row = 2 * sizeof(row_t) + sizeof(nonzero_t);
+  auto rows_per_block = (shmemPerBlock / bytes_per_row);
 
   std::cout << "Threads Per Block: " << numThreadsPerBlock << std::endl;
   std::cout << "Rows Per Block: " << rows_per_block << std::endl;
@@ -161,8 +154,7 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
     tile_size = size / sizeof(row_t);
 
     printf("Device has cache size of %d bytes\n", (int)size);
-    printf("Data elems per row: %d\n", (int)data_elems_per_row);
-    printf("Data size: %ld\n", sizeof(row_t));
+    printf("Data elems per row: %d\n", (int)bytes_per_row);
 
   } else {
     // Using Volta or below
@@ -171,10 +163,10 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
         "> 8\n");
 
     printf("Device has cache size of %d bytes\n", deviceProp.l2CacheSize);
-    printf("Data elems per row: %d\n", data_elems_per_row);
+    printf("Data bytes per row: %d\n", bytes_per_row);
     printf("Data size: %ld\n", sizeof(row_t));
 
-    tile_size = (deviceProp.l2CacheSize / data_elems_per_row) / sizeof(row_t);
+    tile_size = (deviceProp.l2CacheSize / sizeof(row_t));
   }
 
   printf("Tile Size (elements): %d * %d, %d\n", (int)rows_per_block,
@@ -183,9 +175,9 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   /* ========== Execute SPMV ========== */
   gunrock::util::timer_t timer;
   timer.begin();
-  CHECK_CUDA(cudaLaunchCooperativeKernel(
-      (void*)spmv_tiled_kernel<decltype(G), float>, 1, 1,
-      kernelArgs, shmemPerBlock, stream));
+  CHECK_CUDA(
+      cudaLaunchCooperativeKernel((void*)spmv_tiled_kernel<decltype(G), float>,
+                                  1, 1, kernelArgs, shmemPerBlock, stream));
 
   CHECK_CUDA(cudaDeviceSynchronize());
   timer.end();

@@ -273,8 +273,10 @@ class TileIterator {
         shmem_size(_shmem_size),
         tile_layout(_tile_layout) {
     // TODO make sure shmem is aligned
-    shmem_row_offsets = shmem;
-    shmem_output = &shmem_row_offsets[tile_layout.rows_in_tile(TILE_BLOCK)];
+    shmem_row_offsets_start = shmem;
+    shmem_row_offsets_end =
+        &shmem_row_offsets_start[tile_layout.rows_in_tile(TILE_BLOCK)];
+    shmem_output = &shmem_row_offsets_end[tile_layout.rows_in_tile(TILE_BLOCK)];
 
     // print_device("shmem_size: %d\n", (int)shmem_size);
     // print_device("tile_row_size: %d\n", (int)tile_row_size);
@@ -307,20 +309,20 @@ class TileIterator {
 // Iterate and copy to shared
 // TODO convert to ampere async copy
 // TODO use vector loads?
+// TODO don't need to read in starts and stops separately. Combine for
+//      efficiency
+// TODO use streaming loads? (This might conflict with async copy)
 #pragma unroll
     for (auto row_idx = threadIdx.x;
          row_idx < rows_in_block &&
          matrix_coord.row + row_idx < graph.get_number_of_rows();
          row_idx += blockDim.x) {
       // Copy the row offset to shared memory
-      this->shmem_row_offsets[row_idx] =
+      this->shmem_row_offsets_start[row_idx] =
           this->graph.get_row_offsets()[matrix_coord.row + row_idx];
+      this->shmem_row_offsets_end[row_idx] =
+          this->graph.get_row_offsets()[matrix_coord.row + row_idx + 1];
       this->shmem_output[row_idx] = 0;
-    }
-
-    if (matrix_coord.row + rows_in_block <= graph.get_number_of_rows()) {
-      next_tile_offset =
-          graph.get_row_offsets()[matrix_coord.row + rows_in_block];
     }
   }
 
@@ -366,15 +368,19 @@ class TileIterator {
           min(graph.get_number_of_columns(),
               (parent_tile_idx.col[TILE_DEVICE] + 1) * cols_in_block);
 
-      auto offset = this->shmem_row_offsets[row_idx];
-
-      
+      auto offset = this->shmem_row_offsets_start[row_idx];
 
       auto last_col = -1;
       while (true) {
         auto col = this->graph.get_column_indices()[offset];
 
+        // Check if we've crossed a tile boundary...
         if ((int)col >= (int)tile_boundary) {
+          break;
+        }
+
+        // ... OR reached the end of the row
+        if ((int)offset >= this->shmem_row_offsets_end[row_idx]) {
           break;
         }
 
@@ -388,8 +394,8 @@ class TileIterator {
         accum += this->graph.get_nonzero_values()[offset] * this->input[col];
 
         if (row_idx == 0) {
-          printf("accum: %f, offset: %d, col: %d, input: %f\n", accum, offset,
-                 col, this->input[col]);
+          printf("accum: %f, offset: %d, col: %d, input: %f, end_offset: %d\n", accum, offset,
+                 col, this->input[col], this->shmem_row_offsets_end[row_idx]);
         }
 
         offset++;
@@ -398,7 +404,7 @@ class TileIterator {
       }
 
       // Save the offset and values for the next iterations
-      this->shmem_row_offsets[row_idx] = offset;
+      this->shmem_row_offsets_start[row_idx] = offset;
       this->shmem_output[row_idx] = accum;
     }
   }
@@ -500,9 +506,8 @@ class TileIterator {
   shmem_t* shmem;
   const size_t shmem_size;
 
-  const size_t next_tile_offset;
-
-  shmem_t* shmem_row_offsets;
+  shmem_t* shmem_row_offsets_start;
+  shmem_t* shmem_row_offsets_end;
   shmem_t* shmem_output;
 
   layout_t tile_layout;
