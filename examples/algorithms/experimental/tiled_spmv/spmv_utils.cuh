@@ -160,3 +160,45 @@ __host__ __device__ __forceinline__ constexpr IdentityT TupleReduction(
 
   return identity;
 }
+
+void print_gpu_stats() {
+  int device = 0;
+  cudaDeviceProp deviceProp;
+  CHECK_CUDA(cudaGetDeviceProperties(&deviceProp, device))
+
+  // Print the type of device
+  printf("CUDA Device [%d]: \"%s\"\n", device, deviceProp.name);
+
+  // Print the compute capability
+  printf("- Compute Capability: %d.%d\n", deviceProp.major, deviceProp.minor);
+
+  // Print the number of multiprocessors
+  printf("- Total number of SMs: %d\n", deviceProp.multiProcessorCount);
+
+  // Print the amount of memory in GB
+  printf("- Total amount of global memory: %.0f GB\n",
+         deviceProp.totalGlobalMem * 1e-9f);
+
+  // Print the amount of L2 cache
+  printf("- L2 cache size: %.0f KB\n", deviceProp.l2CacheSize * 1e-3f);
+
+  // Print the amount of persisting L2 cache
+  printf("- Persisting L2 cache size: %.0f KB\n",
+         deviceProp.persistingL2CacheMaxSize * 1e-3f);
+
+  // Print the max policy window size
+  printf("- Access policy max window size: %.0f KB\n",
+         deviceProp.accessPolicyMaxWindowSize * 1e-3f);
+  printf("  - %d float32s\n", deviceProp.accessPolicyMaxWindowSize / 4);
+  printf("  - %d float64s\n", deviceProp.accessPolicyMaxWindowSize / 8);
+
+  // Print the amount of shared memory available per block
+  printf("- Shared memory available per block (default): %.0f KB\n",
+         deviceProp.sharedMemPerBlock * 1e-3f);
+  printf("- Shared memory available per block (extended): %.0f KB\n",
+         deviceProp.sharedMemPerBlockOptin * 1e-3f);
+
+  // Print the max number of threads per SM and block
+  printf("- Max threads per SM: %d\n", deviceProp.maxThreadsPerMultiProcessor);
+  printf("- Max threads per block: %d\n", deviceProp.maxThreadsPerBlock);
+}

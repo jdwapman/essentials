@@ -18,6 +18,17 @@ enum LB_t { THREAD_PER_ROW, WARP_PER_ROW, BLOCK_PER_ROW, MERGE_PATH };
 
 template <typename vector_t>
 void setup_ampere_cache(vector_t* pinned_mem) {
+  // The hitRatio parameter can be used to specify the fraction of accesses that
+  // receive the hitProp property. In both of the examples above, 60% of the
+  // memory accesses in the global memory region [ptr..ptr+num_bytes) have the
+  // persisting property and 40% of the memory accesses have the streaming
+  // property. Which specific memory accesses are classified as persisting (the
+  // hitProp) is random with a probability of approximately hitRatio; the
+  // probability distribution depends upon the hardware architecture and the
+  // memory extent.
+
+  // https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#L2_access_intro
+
   // --
   // Set up cache configuration
   int device = 0;
@@ -55,13 +66,13 @@ void setup_ampere_cache(vector_t* pinned_mem) {
         pinned_mem->size() / sizeof(pinned_mem[0]);
 
     // Hint for cache hit ratio
-    stream_attribute.accessPolicyWindow.hitRatio = 0.6;
+    stream_attribute.accessPolicyWindow.hitRatio = 1.0;
 
     // Persistence Property
     stream_attribute.accessPolicyWindow.hitProp = cudaAccessPropertyPersisting;
 
     // Type of access property on cache miss
-    stream_attribute.accessPolicyWindow.missProp = cudaAccessPropertyStreaming;
+    stream_attribute.accessPolicyWindow.missProp = cudaAccessPropertyPersisting;
 
     // Set the attributes to a CUDA Stream
     CHECK_CUDA(cudaStreamSetAttribute(
@@ -72,6 +83,21 @@ void setup_ampere_cache(vector_t* pinned_mem) {
         "WARNING: L2 Cache Management available only for compute capabilities "
         ">= 8\n");
   }
+}
+
+template <typename stream_t>
+void reset_ampere_cache(stream_t& _stream) {
+  // Stream level attributes data structure
+  cudaStreamAttrValue stream_attribute;
+
+  // Setting the window size to 0 disable it
+  stream_attribute.accessPolicyWindow.num_bytes = 0;
+
+  // Overwrite the access policy attribute to a CUDA Stream
+  cudaStreamSetAttribute(_stream, cudaStreamAttributeAccessPolicyWindow,
+                         &stream_attribute);
+  // Remove any persistent lines in L2
+  cudaCtxResetPersistingL2Cache();  
 }
 
 template <typename csr_t, typename vector_t>
@@ -210,6 +236,10 @@ void test_spmv(int num_arguments, char** argument_array) {
     exit(1);
   }
 
+  // Print the GPU stats
+  print_gpu_stats();
+
+  // Print the matrix stats
   printf("Matrix: %s\n", filename.c_str());
   printf("- Rows: %d\n", csr.number_of_rows);
   printf("- Nonzeros: %d\n", csr.number_of_nonzeros);
