@@ -348,8 +348,6 @@ class TileIterator {
     auto matrix_coord = tile_layout.remap_point(
         Point<int, int>(0, 0), block_tile_idx, (size_t)TILE_MATRIX);
 
-    printf("Row 0 has %d nonzeros\n", (int)graph.get_number_of_neighbors(0));
-
     // Do the SPMV
     // 1. Iterate over the rows in the block
 #pragma unroll
@@ -393,10 +391,10 @@ class TileIterator {
 
         accum += this->graph.get_nonzero_values()[offset] * this->input[col];
 
-        if (row_idx == 0) {
-          printf("accum: %f, offset: %d, col: %d, input: %f, end_offset: %d\n", accum, offset,
-                 col, this->input[col], this->shmem_row_offsets_end[row_idx]);
-        }
+        // if (matrix_coord.row + row_idx == 0) {
+        //   printf("accum: %f, offset: %d, col: %d, input: %f, end_offset: %d\n", accum, offset,
+        //          col, this->input[col], this->shmem_row_offsets_end[row_idx]);
+        // }
 
         offset++;
 
@@ -443,17 +441,17 @@ class TileIterator {
          matrix_coord.row + row_idx < graph.get_number_of_rows();
          row_idx += blockDim.x) {
       // Write the outputs to the output vector
-      output[row_idx] = this->shmem_output[row_idx];
+      output[matrix_coord.row + row_idx] = this->shmem_output[row_idx];
     }
   }
 
   template <typename tile_index_t>
   __device__ __forceinline__ void process_all_tiles_at_hierarchy(
       tile_index_t parent_tile_idx) {
-    print_device("Processing tile (%d, %d) at %d\n",
-                 (int)parent_tile_idx.row[parent_tile_idx.getHierarchy()],
-                 (int)parent_tile_idx.col[parent_tile_idx.getHierarchy()],
-                 (int)parent_tile_idx.getHierarchy());
+    // print_device("Processing tile (%d, %d) at %d\n",
+    //              (int)parent_tile_idx.row[parent_tile_idx.getHierarchy()],
+    //              (int)parent_tile_idx.col[parent_tile_idx.getHierarchy()],
+    //              (int)parent_tile_idx.getHierarchy());
 
     // ===== SETUP TASKS ===== //
     if constexpr (parent_tile_idx.getHierarchy() == TILE_DEVICE_BATCH) {
