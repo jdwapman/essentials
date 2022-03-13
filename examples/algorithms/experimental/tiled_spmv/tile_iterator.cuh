@@ -4,9 +4,9 @@
 #include <tuple>
 
 #define TILE_MATRIX 0
-#define TILE_DEVICE_BATCH 1
-#define TILE_DEVICE 2
-#define TILE_BLOCK 3
+#define TILE_SPATIAL 1
+#define TILE_TEMPORAL 2
+#define TILE_TEMPORAL_BLOCK 3
 
 // Forward declare
 template <typename rowdim_t, typename coldim_t>
@@ -275,8 +275,9 @@ class TileIterator {
     // TODO make sure shmem is aligned
     shmem_row_offsets_start = shmem;
     shmem_row_offsets_end =
-        &shmem_row_offsets_start[tile_layout.rows_in_tile(TILE_BLOCK)];
-    shmem_output = &shmem_row_offsets_end[tile_layout.rows_in_tile(TILE_BLOCK)];
+        &shmem_row_offsets_start[tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK)];
+    shmem_output =
+        &shmem_row_offsets_end[tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK)];
 
     // print_device("shmem_size: %d\n", (int)shmem_size);
     // print_device("tile_row_size: %d\n", (int)tile_row_size);
@@ -325,6 +326,8 @@ class TileIterator {
           &(this->graph.get_row_offsets()[matrix_coord.row + row_idx + 1]));
       this->shmem_output[row_idx] = 0;
     }
+
+    __syncthreads();
   }
 
   template <typename tile_index_t>
@@ -365,11 +368,10 @@ class TileIterator {
 
       auto tile_boundary =
           min(graph.get_number_of_columns(),
-              (parent_tile_idx.col[TILE_DEVICE] + 1) * cols_in_block);
+              (parent_tile_idx.col[TILE_TEMPORAL] + 1) * cols_in_block);
 
       auto offset = this->shmem_row_offsets_start[row_idx];
 
-      auto last_col = -1;
       while (true) {
         auto col = __ldcs(&(this->graph.get_column_indices()[offset]));
 
@@ -383,26 +385,10 @@ class TileIterator {
           break;
         }
 
-        // Handle when the cols wrap back around
-        // TODO running into a problem where I need to know the max number of
-        // nonzeros in the row
-        if (last_col >= col) {
-          break;
-        }
-
-        accum += __ldcs(
-            &(this->graph.get_nonzero_values()[offset])) * this->input[col];
-
-        // if (matrix_coord.row + row_idx == 0) {
-        //   printf("accum: %f, offset: %d, col: %d, input: %f, end_offset:
-        //   %d\n", accum, offset,
-        //          col, this->input[col],
-        //          this->shmem_row_offsets_end[row_idx]);
-        // }
+        accum += __ldcs(&(this->graph.get_nonzero_values()[offset])) *
+                 this->input[col];
 
         offset++;
-
-        last_col = col;
       }
 
       // Save the offset and values for the next iterations
@@ -415,12 +401,6 @@ class TileIterator {
   __device__ __forceinline__ void store_tile(tile_index_t parent_tile_idx) {
     // Write the outputs to the output vector
     // Unload data from shared memory
-    // if (threadIdx.x == 0 && blockIdx.x == 0) {
-    //   printf("Unloading data from shared memory\n");
-    // }
-
-    // Save the row offsets to shared memory and initialize the outputs to 0
-    // Load data into shared memory
 
     // If we're loading the first tile in a batch, the device tile is by
     // default  (0, 0) relative to the parent
@@ -462,15 +442,19 @@ class TileIterator {
     //              (int)parent_tile_idx.getHierarchy());
 
     // ===== SETUP TASKS ===== //
-    if constexpr (parent_tile_idx.getHierarchy() == TILE_DEVICE_BATCH) {
+    if constexpr (parent_tile_idx.getHierarchy() == TILE_SPATIAL) {
       load_tile(parent_tile_idx);
     }
 
     // ===== TILE PROCESSING TASKS ===== //
-    if constexpr (parent_tile_idx.getHierarchy() == TILE_DEVICE) {
+    if constexpr (parent_tile_idx.getHierarchy() == TILE_TEMPORAL) {
       // We aren't iterating over the tile anymore, we're now processing it
       // and diving into parallel work
       process_tile(parent_tile_idx);
+
+      // Get the current grid and sync
+      auto grid = cg::this_grid();
+      grid.sync();
     } else {
       // Tile indexer to the child tiles if the parent tile
       auto child_tile_idx = make_tile_index(0, 0, parent_tile_idx);
@@ -494,7 +478,7 @@ class TileIterator {
     }
 
     // ===== TEARDOWN TASKS ===== //
-    if constexpr (parent_tile_idx.getHierarchy() == TILE_DEVICE_BATCH) {
+    if constexpr (parent_tile_idx.getHierarchy() == TILE_SPATIAL) {
       store_tile(parent_tile_idx);
     }
   }

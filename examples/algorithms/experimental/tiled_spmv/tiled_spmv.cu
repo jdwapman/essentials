@@ -8,13 +8,21 @@
 #include "spmv_moderngpu.cuh"
 #include "test_tiled.h"
 #include "spmv_utils.cuh"
+#include "launch_params.cuh"
 
 using namespace gunrock;
 // using namespace experimental;
 using namespace memory;
 
 enum SPMV_t { MGPU, CUB, CUSPARSE, TILED };
-enum LB_t { THREAD_PER_ROW, WARP_PER_ROW, BLOCK_PER_ROW, MERGE_PATH };
+enum LB_t {
+  THREAD_PER_ROW,
+  WARP_PER_ROW,
+  BLOCK_PER_ROW,
+  MERGE_PATH,
+  NONZERO_SPLIT,
+  TWC
+};
 
 template <typename vector_t>
 void setup_ampere_cache(vector_t* pinned_mem) {
@@ -97,7 +105,7 @@ void reset_ampere_cache(stream_t& _stream) {
   cudaStreamSetAttribute(_stream, cudaStreamAttributeAccessPolicyWindow,
                          &stream_attribute);
   // Remove any persistent lines in L2
-  cudaCtxResetPersistingL2Cache();  
+  cudaCtxResetPersistingL2Cache();
 }
 
 template <typename csr_t, typename vector_t>
@@ -179,6 +187,10 @@ void test_spmv(int num_arguments, char** argument_array) {
        cxxopts::value<std::string>())  // Market
       ("d,device", "Device to run on",
        cxxopts::value<int>()->default_value("0"))  // Device
+      ("c,cache", "Pin input vector to L2 cache",
+       cxxopts::value<bool>()->default_value("false"))  // L2 Cache
+      ("l,lb", "Tiled load balancing method to use",
+       cxxopts::value<int>()->default_value("0"))  // Tile LB method
       ("v,verbose", "Verbose output",
        cxxopts::value<bool>()->default_value("false"))  // Verbose (not used)
       ("h,help", "Print help");                         // Help
