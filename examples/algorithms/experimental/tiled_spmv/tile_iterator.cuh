@@ -317,11 +317,12 @@ class TileIterator {
          row_idx < rows_in_block &&
          matrix_coord.row + row_idx < graph.get_number_of_rows();
          row_idx += blockDim.x) {
-      // Copy the row offset to shared memory
+      // Copy the row offset to shared memory. Load streaming since we won't
+      // reuse this
       this->shmem_row_offsets_start[row_idx] =
-          this->graph.get_row_offsets()[matrix_coord.row + row_idx];
-      this->shmem_row_offsets_end[row_idx] =
-          this->graph.get_row_offsets()[matrix_coord.row + row_idx + 1];
+          __ldcs(&(this->graph.get_row_offsets()[matrix_coord.row + row_idx]));
+      this->shmem_row_offsets_end[row_idx] = __ldcs(
+          &(this->graph.get_row_offsets()[matrix_coord.row + row_idx + 1]));
       this->shmem_output[row_idx] = 0;
     }
   }
@@ -370,7 +371,7 @@ class TileIterator {
 
       auto last_col = -1;
       while (true) {
-        auto col = this->graph.get_column_indices()[offset];
+        auto col = __ldcs(&(this->graph.get_column_indices()[offset]));
 
         // Check if we've crossed a tile boundary...
         if ((int)col >= (int)tile_boundary) {
@@ -389,11 +390,14 @@ class TileIterator {
           break;
         }
 
-        accum += this->graph.get_nonzero_values()[offset] * this->input[col];
+        accum += __ldcs(
+            &(this->graph.get_nonzero_values()[offset])) * this->input[col];
 
         // if (matrix_coord.row + row_idx == 0) {
-        //   printf("accum: %f, offset: %d, col: %d, input: %f, end_offset: %d\n", accum, offset,
-        //          col, this->input[col], this->shmem_row_offsets_end[row_idx]);
+        //   printf("accum: %f, offset: %d, col: %d, input: %f, end_offset:
+        //   %d\n", accum, offset,
+        //          col, this->input[col],
+        //          this->shmem_row_offsets_end[row_idx]);
         // }
 
         offset++;
@@ -440,8 +444,12 @@ class TileIterator {
          row_idx < rows_in_block &&
          matrix_coord.row + row_idx < graph.get_number_of_rows();
          row_idx += blockDim.x) {
-      // Write the outputs to the output vector
-      output[matrix_coord.row + row_idx] = this->shmem_output[row_idx];
+      // Write the outputs to the output vector. Store streaming since
+      // we won't access this again
+      // output[matrix_coord.row + row_idx] = this->shmem_output[row_idx];
+
+      __stcs(&(output[matrix_coord.row + row_idx]),
+             this->shmem_output[row_idx]);
     }
   }
 
