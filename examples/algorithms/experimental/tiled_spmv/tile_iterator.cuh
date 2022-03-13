@@ -268,7 +268,7 @@ class TileIterator {
                                           const vector_t* _input,
                                           vector_t* _output,
                                           shmem_t* _shmem,
-                                          const size_t _shmem_size,
+                                          size_t _shmem_size,
                                           layout_t _tile_layout)
       : graph(_graph),
         input(_input),
@@ -278,10 +278,41 @@ class TileIterator {
         tile_layout(_tile_layout) {
     // TODO make sure shmem is aligned
     shmem_row_offsets_start = shmem;
+
+    if (blockIdx.x == 0 && threadIdx.x == 0)
+      printf("shmem_size: %d\n", (int)shmem_size);
+
+    if (blockIdx.x == 0 && threadIdx.x == 0)
+      printf("Rows in tile: %d\n",
+             tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK));
+
+    shmem_size -=
+        sizeof(shmem_t) * tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK);
+
+    if (blockIdx.x == 0 && threadIdx.x == 0)
+      printf("shmem_size: %d\n", (int)shmem_size);
+
     shmem_row_offsets_end =
         &shmem_row_offsets_start[tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK)];
+
+    shmem_size -=
+        sizeof(shmem_t) * tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK);
+
+    if (blockIdx.x == 0 && threadIdx.x == 0)
+      printf("shmem_size: %d\n", (int)shmem_size);
+
     shmem_output =
         &shmem_row_offsets_end[tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK)];
+
+    shmem_size -=
+        sizeof(shmem_t) * tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK);
+
+    assert(shmem_size > 0);
+
+    if (blockIdx.x == 0 && threadIdx.x == 0)
+      printf("shmem_size: %d\n", (int)shmem_size);
+
+    row_queue = &shmem_output[tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK)];
 
     // print_device("shmem_size: %d\n", (int)shmem_size);
     // print_device("tile_row_size: %d\n", (int)tile_row_size);
@@ -485,6 +516,98 @@ class TileIterator {
   }
 
   template <typename tile_index_t>
+  __device__ __forceinline__ void process_tile_warp_per_row_queue(
+      tile_index_t parent_tile_idx) {
+    // If we're loading the first tile in a batch, the device tile is by
+    // default (0, 0) relative to the parent
+    auto device_tile_idx = make_tile_index(0, 0, parent_tile_idx);
+
+    // Then, we need to get the block idx relative to the device tile
+    auto block_tile_idx = make_tile_index((int)blockIdx.x, 0, device_tile_idx);
+    auto rows_in_block = tile_layout.rows_in_tile(block_tile_idx);
+    auto cols_in_block = tile_layout.cols_in_tile(block_tile_idx);
+
+    // Convert coordinates relative to one tile to coordinates relative to
+    // another tile. Note that we need to use block_tile_idx since it has
+    // references to its parents.
+
+    auto matrix_coord = tile_layout.remap_point(
+        Point<int, int>(0, 0), block_tile_idx, (size_t)TILE_MATRIX);
+
+    // Init the warp rows
+    auto row_idx = threadIdx.x / 32;
+
+    // Reset the queue counter
+    if (threadIdx.x == 0) {
+      this->row_queue[0] = (int)(blockDim.x / 32);
+    }
+    __syncthreads();
+
+    while (row_idx < rows_in_block) {
+      // if (threadIdx.x % 32 == 0) {
+      //   printf("Block %d, Warp %d processing row %d\n", (int)blockIdx.x,
+      //          (int)(threadIdx.x / 32), (int)(matrix_coord.row + row_idx));
+      // }
+
+      // 2. Within a row, iterate over the rows in the block until we reach
+      //    either the end of the tile or the end of the matrix
+
+      vector_t accum = this->shmem_output[row_idx];
+
+      auto tile_boundary =
+          min(graph.get_number_of_columns(),
+              (parent_tile_idx.col[TILE_TEMPORAL] + 1) * cols_in_block);
+
+      auto offset = this->shmem_row_offsets_start[row_idx];
+
+      while (true) {
+        // Each thread gets a column. Nice and coalesced
+        auto col = __ldcs(
+            &(this->graph.get_column_indices()[offset + (threadIdx.x % 32)]));
+
+        // Check if we've crossed a tile boundary...
+        if ((int)col >= (int)tile_boundary) {
+          break;
+        }
+
+        // ... OR reached the end of the row
+        if ((int)(offset + threadIdx.x % 32) >=
+            this->shmem_row_offsets_end[row_idx]) {
+          break;
+        }
+
+        auto active = cg::coalesced_threads();
+
+        vector_t warp_val =
+            __ldcs(&(this->graph.get_nonzero_values()[offset])) *
+            this->input[col];
+
+        auto warp_reduce_val =
+            cg::reduce(active, warp_val, cg::plus<vector_t>());
+
+        accum += warp_reduce_val;
+
+        offset += active.size();
+      }
+
+      // Save the offset and values for the next iterations.
+      // When using warp-per-row, only one thread needs to do this.
+      if (threadIdx.x % 32 == 0) {
+        this->shmem_row_offsets_start[row_idx] = offset;
+        this->shmem_output[row_idx] = accum;
+      }
+
+      // Get the next row from the queue
+      if (threadIdx.x == 0) {
+        row_idx = atomicAdd(&(this->row_queue[0]), 1);
+      }
+
+      // Broadcast the row idx to all other threads in the warp
+      row_idx = __shfl_sync(0xffffffff, row_idx, 0);
+    }
+  }
+
+  template <typename tile_index_t>
   __device__ __forceinline__ void store_tile(tile_index_t parent_tile_idx) {
     // Write the outputs to the output vector
     // Unload data from shared memory
@@ -538,7 +661,8 @@ class TileIterator {
       // We aren't iterating over the tile anymore, we're now processing it
       // and diving into parallel work
       // process_tile_thread_per_row(parent_tile_idx);
-      process_tile_warp_per_row(parent_tile_idx);
+      // process_tile_warp_per_row(parent_tile_idx);
+      process_tile_warp_per_row_queue(parent_tile_idx);
 
       // Get the current grid and sync
       auto grid = cg::this_grid();
@@ -582,11 +706,13 @@ class TileIterator {
   const vector_t* input;
   vector_t* output;
   shmem_t* shmem;
-  const size_t shmem_size;
+  size_t shmem_size;
 
   shmem_t* shmem_row_offsets_start;
   shmem_t* shmem_row_offsets_end;
   shmem_t* shmem_output;
+
+  shmem_t* row_queue;
 
   layout_t tile_layout;
 };

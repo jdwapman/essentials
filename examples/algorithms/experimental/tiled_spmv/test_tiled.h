@@ -17,7 +17,6 @@ template <typename graph_t, typename vector_t>
 __global__ void spmv_tiled_kernel(graph_t graph,
                                   vector_t* input,
                                   vector_t* output,
-                                  int* queue_counter,
                                   size_t tile_row_size,
                                   size_t tile_col_size,
                                   size_t shmem_size) {
@@ -86,30 +85,20 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   // Setup grid and block properties
   auto numBlocksPerSm = 0;
   auto numThreadsPerBlock = 0;
-  auto shmemPerBlock = 0;  // bytes
-
-  auto target_occupancy = 4;
-
-  // Number of coordinates. TODO calculate this
-  // based on architecture L2 properties
-  auto tile_size = 0;
+  int shmemPerBlock = 0;  // bytes
 
   // Use the max number of threads per block to maximize parallelism over
   // shmem
 
-  numThreadsPerBlock = deviceProp.maxThreadsPerBlock / target_occupancy;
-  shmemPerBlock = (deviceProp.sharedMemPerBlockOptin / target_occupancy);
+  numThreadsPerBlock = deviceProp.maxThreadsPerBlock / 8;
+  shmemPerBlock = deviceProp.sharedMemPerBlockOptin / 4;
 
   auto bytes_per_row = 2 * sizeof(row_t) + sizeof(nonzero_t);
-  auto rows_per_block = (shmemPerBlock / bytes_per_row);
+  auto rows_per_block = (shmemPerBlock / bytes_per_row) - 1;
 
   std::cout << "Threads Per Block: " << numThreadsPerBlock << std::endl;
   std::cout << "Rows Per Block: " << rows_per_block << std::endl;
   std::cout << "Shmem Per Block (bytes): " << shmemPerBlock << std::endl;
-
-  CHECK_CUDA(cudaFuncSetAttribute(spmv_tiled_kernel<decltype(G), float>,
-                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
-                                  shmemPerBlock));
 
   // Need to know the max occupancy to determine how many blocks to launch
   // for the cooperative kernel. All blocks must be resident on SMs
@@ -117,44 +106,35 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
       &numBlocksPerSm, spmv_tiled_kernel<decltype(G), float>,
       numThreadsPerBlock, shmemPerBlock))
 
+  assert(numBlocksPerSm > 0);
+
+  CHECK_CUDA(cudaFuncSetAttribute(spmv_tiled_kernel<decltype(G), float>,
+                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                  shmemPerBlock));
+
   std::cout << "Max Active Blocks Per SM: " << numBlocksPerSm << std::endl;
 
   dim3 dimBlock(numThreadsPerBlock, 1, 1);
   dim3 dimGrid(deviceProp.multiProcessorCount * numBlocksPerSm, 1, 1);
 
-  /* ========== Setup Kernel Call ========== */
-  void* input_ptr = thrust::raw_pointer_cast(input.data());
-  void* output_ptr = thrust::raw_pointer_cast(output.data());
-
-  auto queue_counter = thrust::device_vector<int>(1);
-  void* queue_counter_ptr = thrust::raw_pointer_cast(queue_counter.data());
-
-  void* kernelArgs[] = {&G,
-                        &input_ptr,
-                        &output_ptr,
-                        &queue_counter_ptr,
-                        &rows_per_block,
-                        &tile_size,
-                        &shmemPerBlock};
-
   /* ========== SETUP TILE SIZE ========== */
+  // TODO need to set this up so I actually do cache pinning. I think this is
+  // already done in the main function? Just need to pass the stream in
   cudaStream_t stream;
-  CHECK_CUDA(cudaStreamCreate(&stream));  // Create CUDA stream
+  CHECK_CUDA(cudaStreamCreate(&stream));
 
-  // Stream level attributes data structure
-  cudaStreamAttrValue stream_attribute;
+  auto cols_per_block = 0;
 
   if (deviceProp.major >= 8) {
     // Using Ampere
 
-    size_t size =
+    auto pinned_cache_size =
         min(int(deviceProp.l2CacheSize), deviceProp.persistingL2CacheMaxSize);
 
     // size is in bytes. Need to convert to elements
-    tile_size = size / sizeof(row_t);
+    cols_per_block = pinned_cache_size / sizeof(nonzero_t);
 
-    printf("Device has cache size of %d bytes\n", (int)size);
-    printf("Data elems per row: %d\n", (int)bytes_per_row);
+    printf("Device has cache size of %d bytes\n", (int)pinned_cache_size);
 
   } else {
     // Using Volta or below
@@ -163,21 +143,32 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
         "> 8\n");
 
     printf("Device has cache size of %d bytes\n", deviceProp.l2CacheSize);
-    printf("Data bytes per row: %d\n", bytes_per_row);
+    printf("Data bytes per row: %ld\n", bytes_per_row);
     printf("Data size: %ld\n", sizeof(row_t));
 
-    tile_size = (deviceProp.l2CacheSize / sizeof(row_t));
+    cols_per_block = (deviceProp.l2CacheSize / sizeof(nonzero_t));
   }
 
+  /* ========== Setup Kernel Call ========== */
+  void* input_ptr = thrust::raw_pointer_cast(input.data());
+  void* output_ptr = thrust::raw_pointer_cast(output.data());
+
+  void* kernelArgs[] = {&G,
+                        &input_ptr,
+                        &output_ptr,
+                        &rows_per_block,
+                        &cols_per_block,
+                        &shmemPerBlock};
+
   printf("Tile Size (elements): %d * %d, %d\n", (int)rows_per_block,
-         (int)dimGrid.x, (int)tile_size);
+         (int)dimGrid.x, (int)cols_per_block);
 
   /* ========== Execute SPMV ========== */
   gunrock::util::timer_t timer;
   timer.begin();
-  CHECK_CUDA(
-      cudaLaunchCooperativeKernel((void*)spmv_tiled_kernel<decltype(G), float>,
-                                  dimGrid, dimBlock, kernelArgs, shmemPerBlock, stream));
+  CHECK_CUDA(cudaLaunchCooperativeKernel(
+      (void*)spmv_tiled_kernel<decltype(G), float>, dimGrid, dimBlock,
+      kernelArgs, shmemPerBlock, stream));
 
   CHECK_CUDA(cudaDeviceSynchronize());
   timer.end();
