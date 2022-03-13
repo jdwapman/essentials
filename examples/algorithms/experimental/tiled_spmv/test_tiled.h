@@ -88,7 +88,7 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   auto numThreadsPerBlock = 0;
   auto shmemPerBlock = 0;  // bytes
 
-  auto target_occupancy = 2;
+  auto target_occupancy = 4;
 
   // Number of coordinates. TODO calculate this
   // based on architecture L2 properties
@@ -177,7 +177,7 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   timer.begin();
   CHECK_CUDA(
       cudaLaunchCooperativeKernel((void*)spmv_tiled_kernel<decltype(G), float>,
-                                  1, 1, kernelArgs, shmemPerBlock, stream));
+                                  dimGrid, dimBlock, kernelArgs, shmemPerBlock, stream));
 
   CHECK_CUDA(cudaDeviceSynchronize());
   timer.end();

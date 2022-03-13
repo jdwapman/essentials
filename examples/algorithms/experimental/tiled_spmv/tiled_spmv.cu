@@ -181,7 +181,7 @@ void test_spmv(int num_arguments, char** argument_array) {
                            "Gunrock commandline parser test");
 
   options.add_options()  // Allows to add options.
-      ("c,csr", "CSR binary file",
+      ("b,bin", "CSR binary file",
        cxxopts::value<std::string>())  // CSR
       ("m,market", "Matrix-market format file",
        cxxopts::value<std::string>())  // Market
