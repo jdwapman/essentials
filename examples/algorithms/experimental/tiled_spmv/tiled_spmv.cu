@@ -180,6 +180,11 @@ void test_spmv(int num_arguments, char** argument_array) {
   cxxopts::Options options(argument_array[0],
                            "Gunrock commandline parser test");
 
+  // Print the argument_array
+  for (int i = 0; i < num_arguments; i++) {
+    std::cout << argument_array[i] << std::endl;
+  }
+
   options.add_options()  // Allows to add options.
       ("b,bin", "CSR binary file",
        cxxopts::value<std::string>())  // CSR
@@ -187,106 +192,105 @@ void test_spmv(int num_arguments, char** argument_array) {
        cxxopts::value<std::string>())  // Market
       ("d,device", "Device to run on",
        cxxopts::value<int>()->default_value("0"))  // Device
-      ("c,cache", "Pin input vector to L2 cache",
-       cxxopts::value<bool>()->default_value("false"))  // L2 Cache
-      ("l,lb", "Tiled load balancing method to use",
-       cxxopts::value<int>()->default_value("0"))  // Tile LB method
       ("v,verbose", "Verbose output",
        cxxopts::value<bool>()->default_value("false"))  // Verbose (not used)
       ("h,help", "Print help");                         // Help
 
   auto result = options.parse(num_arguments, argument_array);
 
+  printf("Using device %d\n", result["device"].as<int>());
+
   if (result.count("help") ||
       (result.count("market") == 0 && result.count("csr") == 0)) {
     std::cout << options.help({""}) << std::endl;
     std::exit(0);
   }
+  
+    std::string filename = "";
+    if (result.count("market") == 1) {
+      filename = result["market"].as<std::string>();
+      if (util::is_market(filename)) {
+      } else {
+        std::cout << options.help({""}) << std::endl;
+        std::exit(0);
+      }
+    } else if (result.count("csr") == 1) {
+      filename = result["csr"].as<std::string>();
+      if (util::is_binary_csr(filename)) {
+      } else {
+        std::cout << options.help({""}) << std::endl;
+        std::exit(0);
+      }
+    } else {
+      std::cout << options.help({""}) << std::endl;
+      std::exit(0);
+    }
 
-  std::string filename = "";
-  if (result.count("market") == 1) {
-    filename = result["market"].as<std::string>();
+    // --
+    // Define types
+
+    using row_t = int;
+    using edge_t = int;
+    using nonzero_t = float;
+
+    using csr_t = format::csr_t<memory_space_t::device, row_t, edge_t,
+    nonzero_t>;
+
+    // --
+    // IO
+
+    csr_t csr;
+    // std::string filename = argument_array[1];
+
     if (util::is_market(filename)) {
+      io::matrix_market_t<row_t, edge_t, nonzero_t> mm;
+      csr.from_coo(mm.load(filename));
+    } else if (util::is_binary_csr(filename)) {
+      csr.read_binary(filename);
     } else {
-      std::cout << options.help({""}) << std::endl;
-      std::exit(0);
+      std::cerr << "Unknown file format: " << filename << std::endl;
+      exit(1);
     }
-  } else if (result.count("csr") == 1) {
-    filename = result["csr"].as<std::string>();
-    if (util::is_binary_csr(filename)) {
-    } else {
-      std::cout << options.help({""}) << std::endl;
-      std::exit(0);
-    }
-  } else {
-    std::cout << options.help({""}) << std::endl;
-    std::exit(0);
-  }
 
-  // --
-  // Define types
+    // Print the GPU stats
+    print_gpu_stats();
 
-  using row_t = int;
-  using edge_t = int;
-  using nonzero_t = float;
+    // Print the matrix stats
+    printf("Matrix: %s\n", filename.c_str());
+    printf("- Rows: %d\n", csr.number_of_rows);
+    printf("- Nonzeros: %d\n", csr.number_of_nonzeros);
 
-  using csr_t = format::csr_t<memory_space_t::device, row_t, edge_t, nonzero_t>;
+    thrust::host_vector<nonzero_t> x_host(csr.number_of_columns);
 
-  // --
-  // IO
+    srand(0);
+    for (size_t idx = 0; idx < x_host.size(); idx++)
+      x_host[idx] = rand() % 64;
 
-  csr_t csr;
-  // std::string filename = argument_array[1];
+    thrust::device_vector<nonzero_t> x_device = x_host;
+    thrust::device_vector<nonzero_t> y_device(csr.number_of_rows);
 
-  if (util::is_market(filename)) {
-    io::matrix_market_t<row_t, edge_t, nonzero_t> mm;
-    csr.from_coo(mm.load(filename));
-  } else if (util::is_binary_csr(filename)) {
-    csr.read_binary(filename);
-  } else {
-    std::cerr << "Unknown file format: " << filename << std::endl;
-    exit(1);
-  }
+    // --
+    // Run the algorithm
 
-  // Print the GPU stats
-  print_gpu_stats();
+    bool cpu_verify = true;
+    bool debug = true;
 
-  // Print the matrix stats
-  printf("Matrix: %s\n", filename.c_str());
-  printf("- Rows: %d\n", csr.number_of_rows);
-  printf("- Nonzeros: %d\n", csr.number_of_nonzeros);
+    double elapsed_cusparse =
+        test_spmv(CUSPARSE, csr, x_device, y_device, cpu_verify, debug);
 
-  thrust::host_vector<nonzero_t> x_host(csr.number_of_columns);
+    double elapsed_cub =
+        test_spmv(CUB, csr, x_device, y_device, cpu_verify, debug);
 
-  srand(0);
-  for (size_t idx = 0; idx < x_host.size(); idx++)
-    x_host[idx] = rand() % 64;
+    double elapsed_mgpu =
+        test_spmv(MGPU, csr, x_device, y_device, cpu_verify, debug);
 
-  thrust::device_vector<nonzero_t> x_device = x_host;
-  thrust::device_vector<nonzero_t> y_device(csr.number_of_rows);
+    double elapsed_tiled =
+        test_spmv(TILED, csr, x_device, y_device, cpu_verify, debug);
 
-  // --
-  // Run the algorithm
-
-  bool cpu_verify = true;
-  bool debug = true;
-
-  double elapsed_cusparse =
-      test_spmv(CUSPARSE, csr, x_device, y_device, cpu_verify, debug);
-
-  double elapsed_cub =
-      test_spmv(CUB, csr, x_device, y_device, cpu_verify, debug);
-
-  double elapsed_mgpu =
-      test_spmv(MGPU, csr, x_device, y_device, cpu_verify, debug);
-
-  double elapsed_tiled =
-      test_spmv(TILED, csr, x_device, y_device, cpu_verify, debug);
-
-  printf("%s,%d,%d,%d,%f,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
-         csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
-         elapsed_cub, elapsed_mgpu, elapsed_tiled);
-
+    printf("%s,%d,%d,%d,%f,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
+           csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
+           elapsed_cub, elapsed_mgpu, elapsed_tiled);
+  
   /* ========== RESET THE GPU ========== */
 
   // if (deviceProp.major >= 8)

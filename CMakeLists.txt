@@ -163,7 +163,7 @@ set(CUDA_FLAGS
   # --device-debug # Device debug
 )
 
-set(CMAKE_CUDA_FLAGS_DEBUG "--optimize 0 --debug --device-debug")
+set(CMAKE_CUDA_FLAGS_DEBUG "--optimize 0 --debug --device-debug -g -G")
 set(CMAKE_CUDA_FLAGS_RELEASE "--optimize 3")
 
 ####################################################

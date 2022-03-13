@@ -543,11 +543,8 @@ class TileIterator {
     }
     __syncthreads();
 
-    while (row_idx < rows_in_block) {
-      // if (threadIdx.x % 32 == 0) {
-      //   printf("Block %d, Warp %d processing row %d\n", (int)blockIdx.x,
-      //          (int)(threadIdx.x / 32), (int)(matrix_coord.row + row_idx));
-      // }
+    while (row_idx < rows_in_block &&
+           matrix_coord.row + row_idx < graph.get_number_of_rows()) {
 
       // 2. Within a row, iterate over the rows in the block until we reach
       //    either the end of the tile or the end of the matrix
@@ -598,7 +595,7 @@ class TileIterator {
       }
 
       // Get the next row from the queue
-      if (threadIdx.x == 0) {
+      if (threadIdx.x % 32 == 0) {
         row_idx = atomicAdd(&(this->row_queue[0]), 1);
       }
 
