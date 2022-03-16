@@ -58,7 +58,7 @@ __global__ void spmv_tiled_kernel(graph_t graph,
 }
 
 template <typename csr_t, typename vector_t>
-double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
+double spmv_tiled(cudaStream_t stream, csr_t& csr, vector_t& input, vector_t& output) {
   // --
   // Build graph
 
@@ -112,6 +112,13 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
                                   cudaFuncAttributeMaxDynamicSharedMemorySize,
                                   shmemPerBlock));
 
+  // See how many registers the kernel uses
+  cudaFuncAttributes attr;
+  CHECK_CUDA(
+      cudaFuncGetAttributes(&attr, spmv_tiled_kernel<decltype(G), float>));
+
+  std::cout << "Registers: " << attr.numRegs << std::endl;
+
   std::cout << "Max Active Blocks Per SM: " << numBlocksPerSm << std::endl;
 
   dim3 dimBlock(numThreadsPerBlock, 1, 1);
@@ -120,8 +127,6 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   /* ========== SETUP TILE SIZE ========== */
   // TODO need to set this up so I actually do cache pinning. I think this is
   // already done in the main function? Just need to pass the stream in
-  cudaStream_t stream;
-  CHECK_CUDA(cudaStreamCreate(&stream));
 
   auto cols_per_block = 0;
 

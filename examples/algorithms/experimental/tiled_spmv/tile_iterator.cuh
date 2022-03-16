@@ -276,46 +276,20 @@ class TileIterator {
         shmem(_shmem),
         shmem_size(_shmem_size),
         tile_layout(_tile_layout) {
+    using row_t = typename graph_t::vertex_type;
+
     // TODO make sure shmem is aligned
-    shmem_row_offsets_start = shmem;
-
-    if (blockIdx.x == 0 && threadIdx.x == 0)
-      printf("shmem_size: %d\n", (int)shmem_size);
-
-    if (blockIdx.x == 0 && threadIdx.x == 0)
-      printf("Rows in tile: %d\n",
-             tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK));
-
-    shmem_size -=
-        sizeof(shmem_t) * tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK);
-
-    if (blockIdx.x == 0 && threadIdx.x == 0)
-      printf("shmem_size: %d\n", (int)shmem_size);
+    shmem_row_offsets_start = (row_t*)shmem;
 
     shmem_row_offsets_end =
-        &shmem_row_offsets_start[tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK)];
+        (row_t*)(&shmem_row_offsets_start[tile_layout.rows_in_tile(
+            TILE_TEMPORAL_BLOCK)]);
 
-    shmem_size -=
-        sizeof(shmem_t) * tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK);
+    shmem_output = (vector_t*)(&shmem_row_offsets_end[tile_layout.rows_in_tile(
+        TILE_TEMPORAL_BLOCK)]);
 
-    if (blockIdx.x == 0 && threadIdx.x == 0)
-      printf("shmem_size: %d\n", (int)shmem_size);
-
-    shmem_output =
-        &shmem_row_offsets_end[tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK)];
-
-    shmem_size -=
-        sizeof(shmem_t) * tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK);
-
-    assert(shmem_size > 0);
-
-    if (blockIdx.x == 0 && threadIdx.x == 0)
-      printf("shmem_size: %d\n", (int)shmem_size);
-
-    row_queue = &shmem_output[tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK)];
-
-    // print_device("shmem_size: %d\n", (int)shmem_size);
-    // print_device("tile_row_size: %d\n", (int)tile_row_size);
+    row_queue =
+        (int*)(&shmem_output[tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK)]);
   }
 
   template <typename tile_index_t>
@@ -545,7 +519,6 @@ class TileIterator {
 
     while (row_idx < rows_in_block &&
            matrix_coord.row + row_idx < graph.get_number_of_rows()) {
-
       // 2. Within a row, iterate over the rows in the block until we reach
       //    either the end of the tile or the end of the matrix
 
@@ -707,7 +680,7 @@ class TileIterator {
 
   shmem_t* shmem_row_offsets_start;
   shmem_t* shmem_row_offsets_end;
-  shmem_t* shmem_output;
+  vector_t* shmem_output;
 
   shmem_t* row_queue;
 

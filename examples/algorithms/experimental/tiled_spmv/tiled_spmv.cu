@@ -25,7 +25,7 @@ enum LB_t {
 };
 
 template <typename vector_t>
-void setup_ampere_cache(vector_t* pinned_mem) {
+void setup_ampere_cache(cudaStream_t* stream, vector_t& pinned_mem) {
   // The hitRatio parameter can be used to specify the fraction of accesses that
   // receive the hitProp property. In both of the examples above, 60% of the
   // memory accesses in the global memory region [ptr..ptr+num_bytes) have the
@@ -43,8 +43,7 @@ void setup_ampere_cache(vector_t* pinned_mem) {
   cudaDeviceProp deviceProp;
   CHECK_CUDA(cudaGetDeviceProperties(&deviceProp, device))
 
-  cudaStream_t stream;
-  cudaStreamCreate(&stream);  // Create CUDA stream
+  cudaStreamCreate(stream);  // Create CUDA stream
 
   // Stream level attributes data structure
   cudaStreamAttrValue stream_attribute;
@@ -60,18 +59,18 @@ void setup_ampere_cache(vector_t* pinned_mem) {
 
     int num_bytes =
         (int)pinned_mem
-            ->size();  // TODO update this for bytes rather than elements
+            .size();  // TODO update this for bytes rather than elements
     size_t window_size = min(deviceProp.accessPolicyMaxWindowSize,
                              num_bytes);  // Select minimum of user defined
                                           // num_bytes and max window size.
 
     // Global Memory data pointer
     stream_attribute.accessPolicyWindow.base_ptr =
-        reinterpret_cast<void*>(pinned_mem->data()->get());
+        reinterpret_cast<void*>(pinned_mem.data().get());
 
     // Number of bytes for persistence access
     stream_attribute.accessPolicyWindow.num_bytes =
-        pinned_mem->size() / sizeof(pinned_mem[0]);
+        pinned_mem.size() / sizeof(pinned_mem[0]);
 
     // Hint for cache hit ratio
     stream_attribute.accessPolicyWindow.hitRatio = 1.0;
@@ -84,7 +83,7 @@ void setup_ampere_cache(vector_t* pinned_mem) {
 
     // Set the attributes to a CUDA Stream
     CHECK_CUDA(cudaStreamSetAttribute(
-        stream, cudaStreamAttributeAccessPolicyWindow, &stream_attribute));
+        *stream, cudaStreamAttributeAccessPolicyWindow, &stream_attribute));
   } else {
     // Using Volta or below
     printf(
@@ -108,39 +107,53 @@ void reset_ampere_cache(stream_t& _stream) {
   cudaCtxResetPersistingL2Cache();
 }
 
-template <typename csr_t, typename vector_t>
+template <typename args_t, typename csr_t, typename vector_t>
 double test_spmv(SPMV_t spmv_impl,
+                 args_t& pargs,
                  csr_t& sparse_matrix,
                  vector_t& d_input,
                  vector_t& d_output,
                  bool cpu_verify,
-                 bool debug) {
+                 bool debug,
+                 bool ampere_cache) {
   // Reset the output vector
   thrust::fill(d_output.begin(), d_output.end(), 0);
+
+  cudaStream_t stream;
+  cudaStreamCreate(&stream);
+
+  // if (ampere_cache) {
+  //   setup_ampere_cache(&stream, d_input);
+  // } else {
+  // }
 
   double elapsed_time = 0;
 
   //   Run on appropriate GPU implementation
   if (spmv_impl == MGPU) {
     printf("=== RUNNING MODERNGPU SPMV ===\n");
-    elapsed_time = spmv_mgpu(sparse_matrix, d_input, d_output);
+    elapsed_time = spmv_mgpu(stream, sparse_matrix, d_input, d_output);
   } else if (spmv_impl == CUB) {
     printf("=== RUNNING CUB SPMV ===\n");
-    elapsed_time = spmv_cub(sparse_matrix, d_input, d_output);
+    elapsed_time = spmv_cub(stream, sparse_matrix, d_input, d_output);
   } else if (spmv_impl == CUSPARSE) {
     printf("=== RUNNING CUSPARSE SPMV ===\n");
-    elapsed_time = spmv_cusparse(sparse_matrix, d_input, d_output);
+    elapsed_time = spmv_cusparse(stream, sparse_matrix, d_input, d_output);
   } else if (spmv_impl == TILED) {
     printf("=== RUNNING TILED SPMV ===\n");
-    elapsed_time = spmv_tiled(sparse_matrix, d_input, d_output);
+    elapsed_time = spmv_tiled(stream, sparse_matrix, d_input, d_output);
   } else {
     std::cout << "Unsupported SPMV implementation" << std::endl;
   }
 
+  // if (ampere_cache) {
+  //   reset_ampere_cache(stream);
+  // }
+
   if (debug)
     printf("GPU finished in %lf ms\n", elapsed_time);
 
-  //   Copy results to CPU
+  //   Copy argss to CPU
   if (cpu_verify) {
     thrust::host_vector<float> h_output = d_output;
     thrust::host_vector<float> h_input = d_input;
@@ -178,119 +191,118 @@ double test_spmv(SPMV_t spmv_impl,
 
 void test_spmv(int num_arguments, char** argument_array) {
   cxxopts::Options options(argument_array[0],
-                           "Gunrock commandline parser test");
-
-  // Print the argument_array
-  for (int i = 0; i < num_arguments; i++) {
-    std::cout << argument_array[i] << std::endl;
-  }
+                           "Tiled SPMV");
 
   options.add_options()  // Allows to add options.
       ("b,bin", "CSR binary file",
        cxxopts::value<std::string>())  // CSR
       ("m,market", "Matrix-market format file",
        cxxopts::value<std::string>())  // Market
-      ("d,device", "Device to run on",
-       cxxopts::value<int>()->default_value("0"))  // Device
+      ("c,cache", "Use Ampere cache pinning",
+       cxxopts::value<bool>()->default_value("false"))  // Market
+      ("g,gpu", "GPU to run on",
+       cxxopts::value<int>()->default_value("0"))  // GPU
       ("v,verbose", "Verbose output",
        cxxopts::value<bool>()->default_value("false"))  // Verbose (not used)
       ("h,help", "Print help");                         // Help
 
-  auto result = options.parse(num_arguments, argument_array);
+  auto args = options.parse(num_arguments, argument_array);
 
-  printf("Using device %d\n", result["device"].as<int>());
+  // TODO set the GPU appropriately
+  printf("Using gpu %d\n", args["gpu"].as<int>());
 
-  if (result.count("help") ||
-      (result.count("market") == 0 && result.count("csr") == 0)) {
+  if (args.count("help") ||
+      (args.count("market") == 0 && args.count("csr") == 0)) {
     std::cout << options.help({""}) << std::endl;
     std::exit(0);
   }
-  
-    std::string filename = "";
-    if (result.count("market") == 1) {
-      filename = result["market"].as<std::string>();
-      if (util::is_market(filename)) {
-      } else {
-        std::cout << options.help({""}) << std::endl;
-        std::exit(0);
-      }
-    } else if (result.count("csr") == 1) {
-      filename = result["csr"].as<std::string>();
-      if (util::is_binary_csr(filename)) {
-      } else {
-        std::cout << options.help({""}) << std::endl;
-        std::exit(0);
-      }
+
+  std::string filename = "";
+  if (args.count("market") == 1) {
+    filename = args["market"].as<std::string>();
+    if (util::is_market(filename)) {
     } else {
       std::cout << options.help({""}) << std::endl;
       std::exit(0);
     }
-
-    // --
-    // Define types
-
-    using row_t = int;
-    using edge_t = int;
-    using nonzero_t = float;
-
-    using csr_t = format::csr_t<memory_space_t::device, row_t, edge_t,
-    nonzero_t>;
-
-    // --
-    // IO
-
-    csr_t csr;
-    // std::string filename = argument_array[1];
-
-    if (util::is_market(filename)) {
-      io::matrix_market_t<row_t, edge_t, nonzero_t> mm;
-      csr.from_coo(mm.load(filename));
-    } else if (util::is_binary_csr(filename)) {
-      csr.read_binary(filename);
+  } else if (args.count("csr") == 1) {
+    filename = args["csr"].as<std::string>();
+    if (util::is_binary_csr(filename)) {
     } else {
-      std::cerr << "Unknown file format: " << filename << std::endl;
-      exit(1);
+      std::cout << options.help({""}) << std::endl;
+      std::exit(0);
     }
+  } else {
+    std::cout << options.help({""}) << std::endl;
+    std::exit(0);
+  }
 
-    // Print the GPU stats
-    print_gpu_stats();
+  // --
+  // Define types
 
-    // Print the matrix stats
-    printf("Matrix: %s\n", filename.c_str());
-    printf("- Rows: %d\n", csr.number_of_rows);
-    printf("- Nonzeros: %d\n", csr.number_of_nonzeros);
+  using row_t = int;
+  using edge_t = int;
+  using nonzero_t = float;
 
-    thrust::host_vector<nonzero_t> x_host(csr.number_of_columns);
+  using csr_t = format::csr_t<memory_space_t::device, row_t, edge_t, nonzero_t>;
 
-    srand(0);
-    for (size_t idx = 0; idx < x_host.size(); idx++)
-      x_host[idx] = rand() % 64;
+  // --
+  // IO
 
-    thrust::device_vector<nonzero_t> x_device = x_host;
-    thrust::device_vector<nonzero_t> y_device(csr.number_of_rows);
+  csr_t csr;
+  // std::string filename = argument_array[1];
 
-    // --
-    // Run the algorithm
+  if (util::is_market(filename)) {
+    io::matrix_market_t<row_t, edge_t, nonzero_t> mm;
+    csr.from_coo(mm.load(filename));
+  } else if (util::is_binary_csr(filename)) {
+    csr.read_binary(filename);
+  } else {
+    std::cerr << "Unknown file format: " << filename << std::endl;
+    exit(1);
+  }
 
-    bool cpu_verify = true;
-    bool debug = true;
+  // Print the GPU stats
+  print_gpu_stats();
 
-    double elapsed_cusparse =
-        test_spmv(CUSPARSE, csr, x_device, y_device, cpu_verify, debug);
+  // Print the matrix stats
+  printf("Matrix: %s\n", filename.c_str());
+  printf("- Rows: %d\n", csr.number_of_rows);
+  printf("- Nonzeros: %d\n", csr.number_of_nonzeros);
 
-    double elapsed_cub =
-        test_spmv(CUB, csr, x_device, y_device, cpu_verify, debug);
+  thrust::host_vector<nonzero_t> x_host(csr.number_of_columns);
 
-    double elapsed_mgpu =
-        test_spmv(MGPU, csr, x_device, y_device, cpu_verify, debug);
+  srand(0);
+  for (size_t idx = 0; idx < x_host.size(); idx++)
+    x_host[idx] = rand() % 64;
 
-    double elapsed_tiled =
-        test_spmv(TILED, csr, x_device, y_device, cpu_verify, debug);
+  thrust::device_vector<nonzero_t> x_device = x_host;
+  thrust::device_vector<nonzero_t> y_device(csr.number_of_rows);
 
-    printf("%s,%d,%d,%d,%f,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
-           csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
-           elapsed_cub, elapsed_mgpu, elapsed_tiled);
-  
+  // --
+  // Run the algorithm
+
+  bool cpu_verify = true;
+  bool debug = true;
+  bool ampere_cache = args["cache"].as<bool>();
+
+  // NOTE: Can't seem to pass the args into the function here
+  double elapsed_cusparse = test_spmv(CUSPARSE, args, csr, x_device, y_device,
+                                      cpu_verify, debug, ampere_cache);
+
+  double elapsed_cub = test_spmv(CUB, args, csr, x_device, y_device, cpu_verify,
+                                 debug, ampere_cache);
+
+  double elapsed_mgpu = test_spmv(MGPU, args, csr, x_device, y_device,
+                                  cpu_verify, debug, ampere_cache);
+
+  double elapsed_tiled = test_spmv(TILED, args, csr, x_device, y_device,
+                                   cpu_verify, debug, ampere_cache);
+
+  printf("%s,%d,%d,%d,%f,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
+         csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
+         elapsed_cub, elapsed_mgpu, elapsed_tiled);
+
   /* ========== RESET THE GPU ========== */
 
   // if (deviceProp.major >= 8)

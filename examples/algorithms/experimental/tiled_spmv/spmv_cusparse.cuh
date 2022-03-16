@@ -20,7 +20,7 @@
 // https://github.com/NVIDIA/CUDALibrarySamples/tree/master/cuSPARSE
 
 template <typename csr_t, typename vector_t>
-double spmv_cusparse(csr_t& A, vector_t& input, vector_t& output) {
+double spmv_cusparse(cudaStream_t stream, csr_t& A, vector_t& input, vector_t& output) {
   // Host problem definition
   float alpha = 1.0f;
   float beta = 0.0f;  // TODO parametrize these
@@ -33,6 +33,9 @@ double spmv_cusparse(csr_t& A, vector_t& input, vector_t& output) {
   void* dBuffer = NULL;
   size_t bufferSize = 0;
   CHECK_CUSPARSE(cusparseCreate(&handle))
+
+  CHECK_CUSPARSE(cusparseSetStream(handle, stream));
+
   // Create sparse matrix A in CSR format
   CHECK_CUSPARSE(cusparseCreateCsr(
       &matA, A.number_of_rows, A.number_of_columns, A.number_of_nonzeros,
