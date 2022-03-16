@@ -5,12 +5,22 @@ import sys
 import numpy as np
 from scipy.sparse.csgraph import reverse_cuthill_mckee
 import argparse
+import statistics
 
-tile_size = 10
-num_SMs = 2
+# SETUP TILE SIZES
+spatial_tile_rows = 1000
+spatial_tile_cols = 1000
+temporal_tile_rows = 100
+temporal_tile_cols = 100
+block_temporal_tile_rows = 10
+block_temporal_tile_cols = 100
+
+num_SMs = 108
+occupancy = 2
+num_blocks = num_SMs * occupancy
 
 # Parse the input arguments
-# Usage: python lb.py [-r reoder] [-t tile_size] [-n num_SMs] <matrix_file>
+# Usage: python lb.py [-r reoder] <matrix_file>
 # -r: reorder the matrix
 # -t: tile size
 # -n: number of SMs
@@ -19,23 +29,11 @@ num_SMs = 2
 parser = argparse.ArgumentParser(description='Parse the input arguments')
 parser.add_argument('-r', '--reorder', type=str, default='default',
                     help='reorder the matrix')
-# parser.add_argument('-t', '--tile_size', type=int,
-#                     default=tile_size, help='tile size')
-parser.add_argument('-n', '--num_SMs', type=int,
-                    default=num_SMs, help='number of SMs')
 parser.add_argument('matrix_file', type=str,
                     help='matrix file')
 
 
 args = parser.parse_args()
-
-# Get the tile size from the input if it's not default
-# if args.tile_size != tile_size:
-#     tile_size = args.tile_size
-
-# Get the number of SMs from the input if it's not default
-if args.num_SMs != num_SMs:
-    num_SMs = args.num_SMs
 
 # Load the matrix file in the first input argument
 coo_mat = sio.mmread(sys.argv[1])
@@ -60,37 +58,73 @@ print("\t- Number of rows:", analyze_mat.shape[0])
 print("\t- Number of columns:", analyze_mat.shape[1])
 print("\t- Number of non-zero elements:", analyze_mat.nnz)
 
-tile_size_rows = 6336
-tile_size_cols = 786432
-print("Using a tile size of:", tile_size_rows, "x", tile_size_cols)
+# Update the tile sizes
+spatial_tile_rows = min(spatial_tile_rows, analyze_mat.shape[0])
+spatial_tile_cols = analyze_mat.shape[1]
+temporal_tile_rows = min(temporal_tile_rows, analyze_mat.shape[0])
+temporal_tile_cols = min(temporal_tile_cols, spatial_tile_cols)
+block_temporal_tile_rows = min(block_temporal_tile_rows, analyze_mat.shape[0])
+block_temporal_tile_cols = min(block_temporal_tile_cols, spatial_tile_cols)
 
-# Determine load imbalance between tiles
-num_row_tiles = ceil(analyze_mat.shape[0] / tile_size_rows)
-num_col_tiles = ceil(analyze_mat.shape[1] / tile_size_cols)
-print("\t- Number of row tiles:", num_row_tiles)
-print("\t- Number of column tiles:", num_col_tiles)
+num_spatial_row_tiles = ceil(analyze_mat.shape[0] / spatial_tile_rows)
+num_spatial_col_tiles = ceil(analyze_mat.shape[1] / spatial_tile_cols)
+num_temporal_row_tiles = ceil(num_spatial_row_tiles / temporal_tile_rows)
+num_temporal_col_tiles = ceil(num_spatial_col_tiles / temporal_tile_cols)
+num_block_temporal_row_tiles = ceil(
+    num_temporal_row_tiles / block_temporal_tile_rows)
+num_block_temporal_col_tiles = ceil(
+    num_temporal_col_tiles / block_temporal_tile_cols)
 
-col_nnz = [0] * num_col_tiles
-for col_tile_idx in range(0, num_col_tiles):
-    print("Column tile:", col_tile_idx)
-    for row_tile_idx in range(0, num_row_tiles):
-        print("\tRow tile:", row_tile_idx)
+for spatial_tile_row_idx in range(0, num_spatial_row_tiles):
+    for spatial_tile_col_idx in range(0, num_spatial_col_tiles):
 
-        # Get the tile corresponding to this SM
-        row_start = row_tile_idx * tile_size_rows
-        row_end = min(row_start + tile_size_rows, analyze_mat.shape[0])
-        col_start = col_tile_idx * tile_size_cols
-        col_end = min(col_start + tile_size_cols, analyze_mat.shape[1])
-        tile = analyze_mat[row_start:row_end, col_start:col_end]
-        print("\t\t- Row range:", row_start, row_end)
-        print("\t\t- Column range:", col_start, col_end)
-        print("\t\t- Nonzero elements in tile:", tile.nnz)
-        col_nnz[col_tile_idx] += tile.nnz
+        # Get the spatial matrix tile
+        row_start = spatial_tile_row_idx * spatial_tile_rows
+        row_end = min(row_start + spatial_tile_rows, analyze_mat.shape[0])
+        col_start = spatial_tile_col_idx * spatial_tile_cols
+        col_end = min(col_start + spatial_tile_cols, analyze_mat.shape[1])
+        spatial_tile = analyze_mat[row_start:row_end, col_start:col_end]
 
-# Compute the load imbalance using the coefficient of variation
-# of the number of non-zero elements in each SM. Use numpy functions
-nnz_mean = np.mean(col_nnz)
-nnz_std = np.std(col_nnz)
-print("- Mean:", nnz_mean)
-print("- Standard deviation:", nnz_std)
-print("- Load imbalance:", nnz_std / nnz_mean)
+        # Temporal tile loop
+        for temporal_tile_row_idx in range(0, num_temporal_row_tiles):
+            for temporal_tile_col_idx in range(0, num_temporal_col_tiles):
+                # Get the temporal matrix tile
+                row_start = temporal_tile_row_idx * temporal_tile_rows
+                row_end = min(row_start + temporal_tile_rows,
+                              spatial_tile.shape[0])
+                col_start = temporal_tile_col_idx * temporal_tile_cols
+                col_end = min(col_start + temporal_tile_cols,
+                              spatial_tile.shape[1])
+
+                temporal_tile = spatial_tile[row_start:row_end,
+                                             col_start:col_end]
+
+                # Get the loab imbalance between each temporal tile block
+                block_nnzs = []
+
+                for block_idx in range(0, num_blocks):
+                    row_start = block_idx * block_temporal_tile_rows
+                    row_end = min(row_start + block_temporal_tile_rows,
+                                  temporal_tile.shape[0])
+                    col_start = 0
+                    col_end = min(col_start + block_temporal_tile_cols,
+                                  temporal_tile.shape[1])
+
+                    block_tile = temporal_tile[row_start:row_end,
+                                               col_start:col_end]
+                    block_nnzs.append(block_tile.nnz)
+
+                # Print the data
+                # print("Spatial Tile:", spatial_tile_row_idx, spatial_tile_col_idx)
+                # print("Temporal Tile:", temporal_tile_row_idx,
+                #       temporal_tile_col_idx)
+                # print("Block NNZs:", block_nnzs)
+
+                # Compute the load imbalance
+                m = statistics.mean(block_nnzs)
+                if m > 0:
+                    imbalance = max(block_nnzs) / m
+                    print("Imbalance:", imbalance)
+                else:
+                    imbalance = 0
+                    print("Imbalance:", imbalance)
