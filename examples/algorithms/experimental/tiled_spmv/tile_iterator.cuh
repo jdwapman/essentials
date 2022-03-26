@@ -522,6 +522,22 @@ class TileIterator {
       // 2. Within a row, iterate over the rows in the block until we reach
       //    either the end of the tile or the end of the matrix
 
+      // Check if the row is completely empty
+      if (this->shmem_row_offsets_start[row_idx] ==
+          this->shmem_row_offsets_end[row_idx]) {
+        if(threadIdx.x == 0){
+          printf("Row skipped\n");
+        }
+        // Get the next row from the queue
+        if (threadIdx.x % 32 == 0) {
+          row_idx = atomicAdd(&(this->row_queue[0]), 1);
+        }
+
+        // Broadcast the row idx to all other threads in the warp
+        row_idx = __shfl_sync(0xffffffff, row_idx, 0);
+        continue;
+      }
+
       vector_t accum = this->shmem_output[row_idx];
 
       auto tile_boundary =
