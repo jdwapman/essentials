@@ -190,8 +190,7 @@ double test_spmv(SPMV_t spmv_impl,
 }
 
 void test_spmv(int num_arguments, char** argument_array) {
-  cxxopts::Options options(argument_array[0],
-                           "Tiled SPMV");
+  cxxopts::Options options(argument_array[0], "Tiled SPMV");
 
   options.add_options()  // Allows to add options.
       ("b,bin", "CSR binary file",
@@ -208,14 +207,27 @@ void test_spmv(int num_arguments, char** argument_array) {
 
   auto args = options.parse(num_arguments, argument_array);
 
-  // TODO set the GPU appropriately
-  printf("Using gpu %d\n", args["gpu"].as<int>());
-
   if (args.count("help") ||
       (args.count("market") == 0 && args.count("csr") == 0)) {
     std::cout << options.help({""}) << std::endl;
     std::exit(0);
   }
+
+  // TODO set the GPU appropriately
+
+  // Get the number of GPUs in the system
+  int num_gpus = 0;
+  cudaGetDeviceCount(&num_gpus);
+  std::cout << "Number of GPUs: " << num_gpus << std::endl;
+
+  // Check if the GPU is valid
+  if (args["gpu"].as<int>() >= num_gpus) {
+    std::cout << "Invalid GPU" << std::endl;
+    return;
+  }
+
+  printf("Using GPU %d\n", args["gpu"].as<int>());
+  CHECK_CUDA(cudaSetDevice(args["gpu"].as<int>()));
 
   std::string filename = "";
   if (args.count("market") == 1) {
