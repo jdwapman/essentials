@@ -58,7 +58,10 @@ __global__ void spmv_tiled_kernel(graph_t graph,
 }
 
 template <typename csr_t, typename vector_t>
-double spmv_tiled(cudaStream_t stream, csr_t& csr, vector_t& input, vector_t& output) {
+double spmv_tiled(
+                  csr_t& csr,
+                  vector_t& input,
+                  vector_t& output) {
   // --
   // Build graph
 
@@ -169,11 +172,12 @@ double spmv_tiled(cudaStream_t stream, csr_t& csr, vector_t& input, vector_t& ou
          (int)dimGrid.x, (int)cols_per_block);
 
   /* ========== Execute SPMV ========== */
+
   gunrock::util::timer_t timer;
   timer.begin();
   CHECK_CUDA(cudaLaunchCooperativeKernel(
       (void*)spmv_tiled_kernel<decltype(G), float>, dimGrid, dimBlock,
-      kernelArgs, shmemPerBlock, stream));
+      kernelArgs, shmemPerBlock));
 
   CHECK_CUDA(cudaDeviceSynchronize());
   timer.end();

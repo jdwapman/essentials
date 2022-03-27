@@ -24,92 +24,8 @@ enum LB_t {
   TWC
 };
 
-template <typename vector_t>
-void setup_ampere_cache(cudaStream_t* stream, vector_t& pinned_mem) {
-  // The hitRatio parameter can be used to specify the fraction of accesses that
-  // receive the hitProp property. In both of the examples above, 60% of the
-  // memory accesses in the global memory region [ptr..ptr+num_bytes) have the
-  // persisting property and 40% of the memory accesses have the streaming
-  // property. Which specific memory accesses are classified as persisting (the
-  // hitProp) is random with a probability of approximately hitRatio; the
-  // probability distribution depends upon the hardware architecture and the
-  // memory extent.
-
-  // https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#L2_access_intro
-
-  // --
-  // Set up cache configuration
-  int device = 0;
-  cudaDeviceProp deviceProp;
-  CHECK_CUDA(cudaGetDeviceProperties(&deviceProp, device))
-
-  cudaStreamCreate(stream);  // Create CUDA stream
-
-  // Stream level attributes data structure
-  cudaStreamAttrValue stream_attribute;
-
-  if (deviceProp.major >= 8) {
-    // Using Ampere
-
-    size_t size =
-        min(int(deviceProp.l2CacheSize), deviceProp.persistingL2CacheMaxSize);
-
-    // set-aside the full L2 cache for persisting accesses or the max allowed
-    CHECK_CUDA(cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, size));
-
-    int num_bytes =
-        (int)pinned_mem
-            .size();  // TODO update this for bytes rather than elements
-    size_t window_size = min(deviceProp.accessPolicyMaxWindowSize,
-                             num_bytes);  // Select minimum of user defined
-                                          // num_bytes and max window size.
-
-    // Global Memory data pointer
-    stream_attribute.accessPolicyWindow.base_ptr =
-        reinterpret_cast<void*>(pinned_mem.data().get());
-
-    // Number of bytes for persistence access
-    stream_attribute.accessPolicyWindow.num_bytes =
-        pinned_mem.size() / sizeof(pinned_mem[0]);
-
-    // Hint for cache hit ratio
-    stream_attribute.accessPolicyWindow.hitRatio = 1.0;
-
-    // Persistence Property
-    stream_attribute.accessPolicyWindow.hitProp = cudaAccessPropertyPersisting;
-
-    // Type of access property on cache miss
-    stream_attribute.accessPolicyWindow.missProp = cudaAccessPropertyPersisting;
-
-    // Set the attributes to a CUDA Stream
-    CHECK_CUDA(cudaStreamSetAttribute(
-        *stream, cudaStreamAttributeAccessPolicyWindow, &stream_attribute));
-  } else {
-    // Using Volta or below
-    printf(
-        "WARNING: L2 Cache Management available only for compute capabilities "
-        ">= 8\n");
-  }
-}
-
-template <typename stream_t>
-void reset_ampere_cache(stream_t& _stream) {
-  // Stream level attributes data structure
-  cudaStreamAttrValue stream_attribute;
-
-  // Setting the window size to 0 disable it
-  stream_attribute.accessPolicyWindow.num_bytes = 0;
-
-  // Overwrite the access policy attribute to a CUDA Stream
-  cudaStreamSetAttribute(_stream, cudaStreamAttributeAccessPolicyWindow,
-                         &stream_attribute);
-  // Remove any persistent lines in L2
-  cudaCtxResetPersistingL2Cache();
-}
-
-template <typename args_t, typename csr_t, typename vector_t>
+template <typename csr_t, typename vector_t>
 double test_spmv(SPMV_t spmv_impl,
-                 args_t& pargs,
                  csr_t& sparse_matrix,
                  vector_t& d_input,
                  vector_t& d_output,
@@ -119,11 +35,8 @@ double test_spmv(SPMV_t spmv_impl,
   // Reset the output vector
   thrust::fill(d_output.begin(), d_output.end(), 0);
 
-  cudaStream_t stream;
-  cudaStreamCreate(&stream);
-
   // if (ampere_cache) {
-  //   setup_ampere_cache(&stream, d_input);
+  //   stream = setup_ampere_cache(stream);
   // } else {
   // }
 
@@ -132,23 +45,20 @@ double test_spmv(SPMV_t spmv_impl,
   //   Run on appropriate GPU implementation
   if (spmv_impl == MGPU) {
     printf("=== RUNNING MODERNGPU SPMV ===\n");
-    elapsed_time = spmv_mgpu(stream, sparse_matrix, d_input, d_output);
+    elapsed_time = spmv_mgpu(sparse_matrix, d_input, d_output);
   } else if (spmv_impl == CUB) {
     printf("=== RUNNING CUB SPMV ===\n");
-    elapsed_time = spmv_cub(stream, sparse_matrix, d_input, d_output);
+    elapsed_time = spmv_cub( sparse_matrix, d_input, d_output);
   } else if (spmv_impl == CUSPARSE) {
     printf("=== RUNNING CUSPARSE SPMV ===\n");
-    elapsed_time = spmv_cusparse(stream, sparse_matrix, d_input, d_output);
+    elapsed_time = spmv_cusparse(sparse_matrix, d_input, d_output);
   } else if (spmv_impl == TILED) {
     printf("=== RUNNING TILED SPMV ===\n");
-    elapsed_time = spmv_tiled(stream, sparse_matrix, d_input, d_output);
+    elapsed_time = spmv_tiled(sparse_matrix, d_input, d_output);
   } else {
     std::cout << "Unsupported SPMV implementation" << std::endl;
   }
 
-  // if (ampere_cache) {
-  //   reset_ampere_cache(stream);
-  // }
 
   if (debug)
     printf("GPU finished in %lf ms\n", elapsed_time);
@@ -262,8 +172,6 @@ void test_spmv(int num_arguments, char** argument_array) {
   // IO
 
   csr_t csr;
-  // std::string filename = argument_array[1];
-
   if (util::is_market(filename)) {
     io::matrix_market_t<row_t, edge_t, nonzero_t> mm;
     csr.from_coo(mm.load(filename));
@@ -299,21 +207,21 @@ void test_spmv(int num_arguments, char** argument_array) {
   bool ampere_cache = args["cache"].as<bool>();
 
   // NOTE: Can't seem to pass the args into the function here
-  double elapsed_cusparse = test_spmv(CUSPARSE, args, csr, x_device, y_device,
-                                      cpu_verify, debug, ampere_cache);
+  // double elapsed_cusparse = test_spmv(CUSPARSE, csr, x_device, y_device,
+  //                                     cpu_verify, debug, ampere_cache);
 
-  double elapsed_cub = test_spmv(CUB, args, csr, x_device, y_device, cpu_verify,
-                                 debug, ampere_cache);
+  double elapsed_cub =
+      test_spmv(CUB, csr, x_device, y_device, cpu_verify, debug, ampere_cache);
 
-  double elapsed_mgpu = test_spmv(MGPU, args, csr, x_device, y_device,
-                                  cpu_verify, debug, ampere_cache);
+  // double elapsed_mgpu = test_spmv(MGPU, csr, x_device, y_device,
+  //                                 cpu_verify, debug, ampere_cache);
 
-  double elapsed_tiled = test_spmv(TILED, args, csr, x_device, y_device,
-                                   cpu_verify, debug, ampere_cache);
+  double elapsed_tiled = test_spmv(TILED, csr, x_device, y_device, cpu_verify,
+                                   debug, ampere_cache);
 
-  printf("%s,%d,%d,%d,%f,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
-         csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
-         elapsed_cub, elapsed_mgpu, elapsed_tiled);
+  // printf("%s,%d,%d,%d,%f,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
+  //        csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
+  //        elapsed_cub, elapsed_mgpu, elapsed_tiled);
 
   /* ========== RESET THE GPU ========== */
 
