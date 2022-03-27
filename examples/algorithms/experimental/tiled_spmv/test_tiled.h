@@ -58,10 +58,7 @@ __global__ void spmv_tiled_kernel(graph_t graph,
 }
 
 template <typename csr_t, typename vector_t>
-double spmv_tiled(
-                  csr_t& csr,
-                  vector_t& input,
-                  vector_t& output) {
+double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   // --
   // Build graph
 
@@ -93,8 +90,8 @@ double spmv_tiled(
   // Use the max number of threads per block to maximize parallelism over
   // shmem
 
-  numThreadsPerBlock = deviceProp.maxThreadsPerBlock / 8;
-  shmemPerBlock = deviceProp.sharedMemPerBlockOptin / 4;
+  numThreadsPerBlock = deviceProp.maxThreadsPerBlock;
+  shmemPerBlock = deviceProp.sharedMemPerBlockOptin;
 
   auto bytes_per_row = 2 * sizeof(row_t) + sizeof(nonzero_t);
   auto rows_per_block = (shmemPerBlock / bytes_per_row) - 1;
@@ -103,6 +100,10 @@ double spmv_tiled(
   std::cout << "Rows Per Block: " << rows_per_block << std::endl;
   std::cout << "Shmem Per Block (bytes): " << shmemPerBlock << std::endl;
 
+  CHECK_CUDA(cudaFuncSetAttribute(spmv_tiled_kernel<decltype(G), float>,
+                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
+                                  shmemPerBlock));
+
   // Need to know the max occupancy to determine how many blocks to launch
   // for the cooperative kernel. All blocks must be resident on SMs
   CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
@@ -110,10 +111,6 @@ double spmv_tiled(
       numThreadsPerBlock, shmemPerBlock))
 
   assert(numBlocksPerSm > 0);
-
-  CHECK_CUDA(cudaFuncSetAttribute(spmv_tiled_kernel<decltype(G), float>,
-                                  cudaFuncAttributeMaxDynamicSharedMemorySize,
-                                  shmemPerBlock));
 
   // See how many registers the kernel uses
   cudaFuncAttributes attr;
