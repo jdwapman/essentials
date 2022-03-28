@@ -203,9 +203,8 @@ void print_gpu_stats() {
   printf("- Max threads per block: %d\n", deviceProp.maxThreadsPerBlock);
 }
 
-// template <typename vector_t>
-
-cudaStream_t setup_ampere_cache() {
+template <typename vector_t>
+cudaStream_t setup_ampere_cache(vector_t data) {
   // The hitRatio parameter can be used to specify the fraction of accesses that
   // receive the hitProp property. In both of the examples above, 60% of the
   // memory accesses in the global memory region [ptr..ptr+num_bytes) have the
@@ -217,55 +216,47 @@ cudaStream_t setup_ampere_cache() {
 
   // https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#L2_access_intro
 
-  cudaStream_t stream;
-
   // --
   // Set up cache configuration
-  int device = 0;
-  cudaDeviceProp deviceProp;
-  CHECK_CUDA(cudaGetDeviceProperties(&deviceProp, device))
 
+  cudaStream_t stream;
   cudaStreamCreate(&stream);  // Create CUDA stream
 
-  // Stream level attributes data structure
-  cudaStreamAttrValue stream_attribute;
+  cudaDeviceProp prop;                // CUDA device properties variable
+  cudaGetDeviceProperties(&prop, 0);  // Query GPU properties
 
-  if (deviceProp.major >= 8) {
+  if (prop.major >= 8) {
     // Using Ampere
 
-    size_t size =
-        min(int(deviceProp.l2CacheSize), deviceProp.persistingL2CacheMaxSize);
+    size_t size = min(int(prop.l2CacheSize), prop.persistingL2CacheMaxSize);
+    CHECK_CUDA(
+        cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize,
+                           size));  // set-aside 100% of L2 cache for
+                                    // persisting accesses or the max allowed
 
-    // set-aside the full L2 cache for persisting accesses or the max allowed
-    CHECK_CUDA(cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize, size));
+    size_t data_size_bytes = data.size() * sizeof(data[0]);
 
-    // int num_bytes =
-    //     (int)pinned_mem
-    //         .size();  // TODO update this for bytes rather than elements
-    // size_t window_size = min(deviceProp.accessPolicyMaxWindowSize,
-    //                          num_bytes);  // Select minimum of user defined
-    //                                       // num_bytes and max window size.
+    size_t window_size =
+        min((size_t)prop.accessPolicyMaxWindowSize,
+            data_size_bytes);  // Select minimum of user defined
+                               // num_bytes and max window size.
 
-    // Global Memory data pointer
-    stream_attribute.accessPolicyWindow.base_ptr = NULL;
-        // reinterpret_cast<void*>(pinned_mem.data().get());
+    cudaStreamAttrValue
+        stream_attribute;  // Stream level attributes data structure
+    stream_attribute.accessPolicyWindow.base_ptr = reinterpret_cast<void*>(
+        data.data().get());  // Global Memory data pointer
+    stream_attribute.accessPolicyWindow.num_bytes =
+        window_size;  // Number of bytes for persistence access
+    stream_attribute.accessPolicyWindow.hitRatio =
+        1.0;  // Hint for cache hit ratio
+    stream_attribute.accessPolicyWindow.hitProp =
+        cudaAccessPropertyPersisting;  // Persistence Property
+    stream_attribute.accessPolicyWindow.missProp =
+        cudaAccessPropertyStreaming;  // Type of access property on cache miss
 
-    // Number of bytes for persistence access
-    stream_attribute.accessPolicyWindow.num_bytes = 8;
-        // pinned_mem.size() / sizeof(pinned_mem[0]);
-
-    // Hint for cache hit ratio
-    stream_attribute.accessPolicyWindow.hitRatio = 1.0;
-
-    // Persistence Property
-    stream_attribute.accessPolicyWindow.hitProp = cudaAccessPropertyPersisting;
-
-    // Type of access property on cache miss
-    stream_attribute.accessPolicyWindow.missProp = cudaAccessPropertyPersisting;
-
-    // Set the attributes to a CUDA Stream
     CHECK_CUDA(cudaStreamSetAttribute(
-        stream, cudaStreamAttributeAccessPolicyWindow, &stream_attribute));
+        stream, cudaStreamAttributeAccessPolicyWindow,
+        &stream_attribute));  // Set the attributes to a CUDA Stream
   } else {
     // Using Volta or below
     printf(
@@ -285,8 +276,8 @@ void reset_ampere_cache(stream_t stream) {
   stream_attribute.accessPolicyWindow.num_bytes = 0;
 
   // Overwrite the access policy attribute to a CUDA Stream
-  cudaStreamSetAttribute(stream, cudaStreamAttributeAccessPolicyWindow,
-                         &stream_attribute);
+  CHECK_CUDA(cudaStreamSetAttribute(stream, cudaStreamAttributeAccessPolicyWindow,
+                         &stream_attribute));
   // Remove any persistent lines in L2
-  cudaCtxResetPersistingL2Cache();
+  CHECK_CUDA(cudaCtxResetPersistingL2Cache());
 }

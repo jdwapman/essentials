@@ -4,7 +4,7 @@
 #include "spmv_utils.cuh"
 
 template <typename csr_t, typename vector_t>
-double spmv_mgpu(csr_t& A, vector_t& input, vector_t& output) {
+double spmv_mgpu(cudaStream_t stream, csr_t& A, vector_t& input, vector_t& output) {
   // ... GPU SPMV
   // GPU device context, print
   mgpu::standard_context_t context(false);

@@ -8,7 +8,10 @@
 #include <cuda_runtime_api.h>  // cudaMalloc, cudaMemcpy, etc.
 
 template <typename csr_t, typename vector_t>
-double spmv_cub(csr_t& A, vector_t& input, vector_t& output) {
+double spmv_cub(cudaStream_t stream,
+                csr_t& A,
+                vector_t& input,
+                vector_t& output) {
   // Determine temporary device storage requirements
   void* d_temp_storage = NULL;
   size_t temp_storage_bytes = 0;
@@ -37,7 +40,7 @@ double spmv_cub(csr_t& A, vector_t& input, vector_t& output) {
   CHECK_CUDA(cub::DeviceSpmv::CsrMV(
       d_temp_storage, temp_storage_bytes, d_values, d_row_offsets, d_col_idx,
       input.data().get(), output.data().get(), A.number_of_rows,
-      A.number_of_columns, A.number_of_nonzeros, 0, true));
+      A.number_of_columns, A.number_of_nonzeros, 0, stream));
   CHECK_CUDA(cudaDeviceSynchronize());
   timer.end();
 

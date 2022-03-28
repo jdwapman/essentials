@@ -90,8 +90,8 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   // Use the max number of threads per block to maximize parallelism over
   // shmem
 
-  numThreadsPerBlock = deviceProp.maxThreadsPerBlock;
-  shmemPerBlock = deviceProp.sharedMemPerBlockOptin;
+  numThreadsPerBlock = deviceProp.maxThreadsPerBlock / 4;
+  shmemPerBlock = deviceProp.sharedMemPerBlockOptin / 4;
 
   auto bytes_per_row = 2 * sizeof(row_t) + sizeof(nonzero_t);
   auto rows_per_block = (shmemPerBlock / bytes_per_row) - 1;
@@ -110,8 +110,6 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
       &numBlocksPerSm, spmv_tiled_kernel<decltype(G), float>,
       numThreadsPerBlock, shmemPerBlock))
 
-  assert(numBlocksPerSm > 0);
-
   // See how many registers the kernel uses
   cudaFuncAttributes attr;
   CHECK_CUDA(
@@ -120,6 +118,8 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
   std::cout << "Registers: " << attr.numRegs << std::endl;
 
   std::cout << "Max Active Blocks Per SM: " << numBlocksPerSm << std::endl;
+
+  assert(numBlocksPerSm > 0);
 
   dim3 dimBlock(numThreadsPerBlock, 1, 1);
   dim3 dimGrid(deviceProp.multiProcessorCount * numBlocksPerSm, 1, 1);
@@ -170,11 +170,14 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
 
   /* ========== Execute SPMV ========== */
 
+  // Create a cuda stream
+  auto stream = setup_ampere_cache(input);
+
   gunrock::util::timer_t timer;
   timer.begin();
   CHECK_CUDA(cudaLaunchCooperativeKernel(
       (void*)spmv_tiled_kernel<decltype(G), float>, dimGrid, dimBlock,
-      kernelArgs, shmemPerBlock));
+      kernelArgs, shmemPerBlock, stream));
 
   CHECK_CUDA(cudaDeviceSynchronize());
   timer.end();

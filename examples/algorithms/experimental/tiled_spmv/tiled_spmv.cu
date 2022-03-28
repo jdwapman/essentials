@@ -35,23 +35,23 @@ double test_spmv(SPMV_t spmv_impl,
   // Reset the output vector
   thrust::fill(d_output.begin(), d_output.end(), 0);
 
-  // if (ampere_cache) {
-  //   stream = setup_ampere_cache(stream);
-  // } else {
-  // }
+  cudaStream_t stream;
+  if (ampere_cache) {
+    stream = setup_ampere_cache(d_input);
+  }
 
   double elapsed_time = 0;
 
   //   Run on appropriate GPU implementation
   if (spmv_impl == MGPU) {
     printf("=== RUNNING MODERNGPU SPMV ===\n");
-    elapsed_time = spmv_mgpu(sparse_matrix, d_input, d_output);
+    elapsed_time = spmv_mgpu(stream, sparse_matrix, d_input, d_output);
   } else if (spmv_impl == CUB) {
     printf("=== RUNNING CUB SPMV ===\n");
-    elapsed_time = spmv_cub( sparse_matrix, d_input, d_output);
+    elapsed_time = spmv_cub(stream, sparse_matrix, d_input, d_output);
   } else if (spmv_impl == CUSPARSE) {
     printf("=== RUNNING CUSPARSE SPMV ===\n");
-    elapsed_time = spmv_cusparse(sparse_matrix, d_input, d_output);
+    elapsed_time = spmv_cusparse(stream, sparse_matrix, d_input, d_output);
   } else if (spmv_impl == TILED) {
     printf("=== RUNNING TILED SPMV ===\n");
     elapsed_time = spmv_tiled(sparse_matrix, d_input, d_output);
@@ -59,6 +59,9 @@ double test_spmv(SPMV_t spmv_impl,
     std::cout << "Unsupported SPMV implementation" << std::endl;
   }
 
+  if (ampere_cache) {
+    reset_ampere_cache(stream);
+  }
 
   if (debug)
     printf("GPU finished in %lf ms\n", elapsed_time);
@@ -222,21 +225,6 @@ void test_spmv(int num_arguments, char** argument_array) {
   // printf("%s,%d,%d,%d,%f,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
   //        csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
   //        elapsed_cub, elapsed_mgpu, elapsed_tiled);
-
-  /* ========== RESET THE GPU ========== */
-
-  // if (deviceProp.major >= 8)
-  // {
-  //   // Setting the window size to 0 disable it
-  //   stream_attribute.accessPolicyWindow.num_bytes = 0;
-
-  //   // Overwrite the access policy attribute to a CUDA Stream
-  //   CHECK_CUDA(cudaStreamSetAttribute(
-  //       stream, cudaStreamAttributeAccessPolicyWindow, &stream_attribute));
-
-  //   // Remove any persistent lines in L2
-  //   CHECK_CUDA(cudaCtxResetPersistingL2Cache());
-  // }
 }
 
 int main(int argc, char** argv) {
