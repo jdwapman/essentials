@@ -58,7 +58,7 @@ __global__ void spmv_tiled_kernel(graph_t graph,
 }
 
 template <typename csr_t, typename vector_t, typename args_t>
-double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output, args_t pargs) {
+double spmv_tiled(cudaStream_t stream, csr_t& csr, vector_t& input, vector_t& output, args_t pargs) {
   // --
   // Build graph
 
@@ -169,9 +169,6 @@ double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output, args_t pargs) {
          (int)dimGrid.x, (int)cols_per_block);
 
   /* ========== Execute SPMV ========== */
-
-  // Create a cuda stream
-  auto stream = setup_ampere_cache(input);
 
   gunrock::util::timer_t timer;
   timer.begin();

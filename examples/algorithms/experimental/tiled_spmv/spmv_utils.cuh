@@ -272,12 +272,18 @@ void reset_ampere_cache(stream_t stream) {
   // Stream level attributes data structure
   cudaStreamAttrValue stream_attribute;
 
+  CHECK_CUDA(cudaStreamGetAttribute(
+      stream, cudaStreamAttributeAccessPolicyWindow,
+      &stream_attribute));  // Get the attributes from a CUDA Stream
+
   // Setting the window size to 0 disable it
   stream_attribute.accessPolicyWindow.num_bytes = 0;
 
   // Overwrite the access policy attribute to a CUDA Stream
-  CHECK_CUDA(cudaStreamSetAttribute(stream, cudaStreamAttributeAccessPolicyWindow,
+  CHECK_CUDA(cudaStreamSetAttribute(stream,
+  cudaStreamAttributeAccessPolicyWindow,
                          &stream_attribute));
+
   // Remove any persistent lines in L2
   CHECK_CUDA(cudaCtxResetPersistingL2Cache());
 }

@@ -29,9 +29,6 @@ double test_spmv(SPMV_t spmv_impl,
                  csr_t& sparse_matrix,
                  vector_t& d_input,
                  vector_t& d_output,
-                 bool cpu_verify,
-                 bool debug,
-                 bool ampere_cache,
                  args_t pargs) {
   // Reset the output vector
   thrust::fill(d_output.begin(), d_output.end(), 0);
@@ -41,6 +38,8 @@ double test_spmv(SPMV_t spmv_impl,
   cudaStream_t stream;
   if (pargs.count("pin")) {
     stream = setup_ampere_cache(d_input);
+  } else {
+    CHECK_CUDA(cudaStreamCreate(&stream));
   }
 
   double elapsed_time = 0;
@@ -58,7 +57,7 @@ double test_spmv(SPMV_t spmv_impl,
         spmv_cusparse(stream, sparse_matrix, d_input, d_output, pargs);
   } else if (spmv_impl == TILED) {
     printf("=== RUNNING TILED SPMV ===\n");
-    elapsed_time = spmv_tiled(sparse_matrix, d_input, d_output, pargs);
+    elapsed_time = spmv_tiled(stream, sparse_matrix, d_input, d_output, pargs);
   } else {
     std::cout << "Unsupported SPMV implementation" << std::endl;
   }
@@ -217,26 +216,18 @@ void test_spmv(int num_arguments, char** argument_array) {
   // --
   // Run the algorithm
 
-  bool cpu_verify = true;
-  bool debug = true;
-  bool ampere_cache = args["pin"].as<bool>();
-
   // NOTE: Can't seem to pass the args into the function here
-  double elapsed_cusparse = test_spmv(CUSPARSE, csr, x_device, y_device,
-                                      cpu_verify, debug, ampere_cache, args);
+  double elapsed_cusparse = test_spmv(CUSPARSE, csr, x_device, y_device, args);
 
-  // double elapsed_cub = test_spmv(CUB, csr, x_device, y_device, cpu_verify,
-  //                                debug, ampere_cache, args);
+  double elapsed_cub = test_spmv(CUB, csr, x_device, y_device, args);
 
-  // double elapsed_mgpu = test_spmv(MGPU, csr, x_device, y_device,
-  //                                 cpu_verify, debug, ampere_cache, args);
+  double elapsed_mgpu = test_spmv(MGPU, csr, x_device, y_device, args);
 
-  // double elapsed_tiled = test_spmv(TILED, csr, x_device, y_device, cpu_verify,
-  //                                  debug, ampere_cache, args);
+  double elapsed_tiled = test_spmv(TILED, csr, x_device, y_device, args);
 
-  // printf("%s,%d,%d,%d,%f,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
-  //        csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
-  //        elapsed_cub, elapsed_mgpu, elapsed_tiled);
+  printf("%s,%d,%d,%d,%f,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
+         csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
+         elapsed_cub, elapsed_mgpu, elapsed_tiled);
 
   // Reset the device
 }

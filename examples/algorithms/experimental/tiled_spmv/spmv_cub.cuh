@@ -22,7 +22,7 @@ double spmv_cub(cudaStream_t stream,
       d_temp_storage, temp_storage_bytes, A.nonzero_values.data().get(),
       A.row_offsets.data().get(), A.column_indices.data().get(),
       input.data().get(), output.data().get(), A.number_of_rows,
-      A.number_of_columns, A.number_of_nonzeros));
+      A.number_of_columns, A.number_of_nonzeros, stream));
   CHECK_CUDA(cudaDeviceSynchronize());
 
   // Allocate temporary storage

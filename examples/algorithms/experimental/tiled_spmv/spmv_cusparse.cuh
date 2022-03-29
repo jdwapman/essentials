@@ -38,11 +38,7 @@ double spmv_cusparse(cudaStream_t stream,
   size_t bufferSize = 0;
   CHECK_CUSPARSE(cusparseCreate(&handle))
 
-  // Create a cuda stream
-  // cudaStream_t cudaStream;
-  // CHECK_CUDA(cudaStreamCreate(&cudaStream))
-
-  // CHECK_CUSPARSE(cusparseSetStream(handle, cudaStream));
+  CHECK_CUSPARSE(cusparseSetStream(handle, stream));
 
   // Create sparse matrix A in CSR format
   CHECK_CUSPARSE(cusparseCreateCsr(
