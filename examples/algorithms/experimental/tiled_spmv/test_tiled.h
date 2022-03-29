@@ -57,8 +57,8 @@ __global__ void spmv_tiled_kernel(graph_t graph,
   // }
 }
 
-template <typename csr_t, typename vector_t>
-double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output) {
+template <typename csr_t, typename vector_t, typename args_t>
+double spmv_tiled(csr_t& csr, vector_t& input, vector_t& output, args_t pargs) {
   // --
   // Build graph
 

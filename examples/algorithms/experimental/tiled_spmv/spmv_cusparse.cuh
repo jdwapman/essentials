@@ -19,8 +19,12 @@
 // Helper code from CUDALibrarySamples
 // https://github.com/NVIDIA/CUDALibrarySamples/tree/master/cuSPARSE
 
-template <typename csr_t, typename vector_t>
-double spmv_cusparse(cudaStream_t stream, csr_t& A, vector_t& input, vector_t& output) {
+template <typename csr_t, typename vector_t, typename args_t>
+double spmv_cusparse(cudaStream_t stream,
+                     csr_t& A,
+                     vector_t& input,
+                     vector_t& output,
+                     args_t pargs) {
   // Host problem definition
   float alpha = 1.0f;
   float beta = 0.0f;  // TODO parametrize these
@@ -34,7 +38,11 @@ double spmv_cusparse(cudaStream_t stream, csr_t& A, vector_t& input, vector_t& o
   size_t bufferSize = 0;
   CHECK_CUSPARSE(cusparseCreate(&handle))
 
-  CHECK_CUSPARSE(cusparseSetStream(handle, stream));
+  // Create a cuda stream
+  // cudaStream_t cudaStream;
+  // CHECK_CUDA(cudaStreamCreate(&cudaStream))
+
+  // CHECK_CUSPARSE(cusparseSetStream(handle, cudaStream));
 
   // Create sparse matrix A in CSR format
   CHECK_CUSPARSE(cusparseCreateCsr(
@@ -72,7 +80,6 @@ double spmv_cusparse(cudaStream_t stream, csr_t& A, vector_t& input, vector_t& o
 
   // device memory deallocation
   CHECK_CUDA(cudaFree(dBuffer));
-
 
   return timer.milliseconds();
 }

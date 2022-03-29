@@ -7,11 +7,11 @@
 #include "spmv_utils.cuh"
 #include <cuda_runtime_api.h>  // cudaMalloc, cudaMemcpy, etc.
 
-template <typename csr_t, typename vector_t>
+template <typename csr_t, typename vector_t, typename args_t>
 double spmv_cub(cudaStream_t stream,
                 csr_t& A,
                 vector_t& input,
-                vector_t& output) {
+                vector_t& output, args_t pargs) {
   // Determine temporary device storage requirements
   void* d_temp_storage = NULL;
   size_t temp_storage_bytes = 0;

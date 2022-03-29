@@ -24,19 +24,22 @@ enum LB_t {
   TWC
 };
 
-template <typename csr_t, typename vector_t>
+template <typename csr_t, typename vector_t, typename args_t>
 double test_spmv(SPMV_t spmv_impl,
                  csr_t& sparse_matrix,
                  vector_t& d_input,
                  vector_t& d_output,
                  bool cpu_verify,
                  bool debug,
-                 bool ampere_cache) {
+                 bool ampere_cache,
+                 args_t pargs) {
   // Reset the output vector
   thrust::fill(d_output.begin(), d_output.end(), 0);
 
+  // auto device = pargs["gpu"].template as<int>();
+
   cudaStream_t stream;
-  if (ampere_cache) {
+  if (pargs.count("pin")) {
     stream = setup_ampere_cache(d_input);
   }
 
@@ -45,29 +48,30 @@ double test_spmv(SPMV_t spmv_impl,
   //   Run on appropriate GPU implementation
   if (spmv_impl == MGPU) {
     printf("=== RUNNING MODERNGPU SPMV ===\n");
-    elapsed_time = spmv_mgpu(stream, sparse_matrix, d_input, d_output);
+    elapsed_time = spmv_mgpu(stream, sparse_matrix, d_input, d_output, pargs);
   } else if (spmv_impl == CUB) {
     printf("=== RUNNING CUB SPMV ===\n");
-    elapsed_time = spmv_cub(stream, sparse_matrix, d_input, d_output);
+    elapsed_time = spmv_cub(stream, sparse_matrix, d_input, d_output, pargs);
   } else if (spmv_impl == CUSPARSE) {
     printf("=== RUNNING CUSPARSE SPMV ===\n");
-    elapsed_time = spmv_cusparse(stream, sparse_matrix, d_input, d_output);
+    elapsed_time =
+        spmv_cusparse(stream, sparse_matrix, d_input, d_output, pargs);
   } else if (spmv_impl == TILED) {
     printf("=== RUNNING TILED SPMV ===\n");
-    elapsed_time = spmv_tiled(sparse_matrix, d_input, d_output);
+    elapsed_time = spmv_tiled(sparse_matrix, d_input, d_output, pargs);
   } else {
     std::cout << "Unsupported SPMV implementation" << std::endl;
   }
 
-  if (ampere_cache) {
+  if (pargs.count("pin")) {
     reset_ampere_cache(stream);
   }
 
-  if (debug)
+  if (pargs.count("verbose"))
     printf("GPU finished in %lf ms\n", elapsed_time);
 
   //   Copy argss to CPU
-  if (cpu_verify) {
+  if (pargs.count("cpu")) {
     thrust::host_vector<float> h_output = d_output;
     thrust::host_vector<float> h_input = d_input;
 
@@ -75,7 +79,7 @@ double test_spmv(SPMV_t spmv_impl,
     thrust::host_vector<float> cpu_ref(sparse_matrix.number_of_rows);
     cpu_spmv(sparse_matrix, h_input, cpu_ref);
 
-    if (debug) {
+    if (pargs.count("verbose")) {
       display(d_input, "d_input");
       display(d_output, "d_output");
       display(cpu_ref, "cpu_ref");
@@ -85,15 +89,15 @@ double test_spmv(SPMV_t spmv_impl,
     int num_errors = check_spmv(cpu_ref, h_output);
 
     // Print the number of errors
-    if (debug)
+    if (pargs.count("verbose"))
       printf("Errors: %d\n", num_errors);
 
     if (!num_errors) {
-      if (debug)
+      if (pargs.count("verbose"))
         std::cout << "Validation Successful" << std::endl;
       return elapsed_time;
     } else {
-      if (debug)
+      if (pargs.count("verbose"))
         std::cout << "Validation Failed" << std::endl;
       return -1;
     }
@@ -110,12 +114,22 @@ void test_spmv(int num_arguments, char** argument_array) {
        cxxopts::value<std::string>())  // CSR
       ("m,market", "Matrix-market format file",
        cxxopts::value<std::string>())  // Market
-      ("c,cache", "Use Ampere cache pinning",
-       cxxopts::value<bool>()->default_value("false"))  // Market
-      ("g,gpu", "GPU to run on",
+      ("c,cpu", "Run a CPU comparison",
+       cxxopts::value<bool>()->default_value("false"))  // CPU
+      ("cub", "Run CUB SPMV",
+       cxxopts::value<bool>()->default_value("false"))  // CUB
+      ("mgpu", "Run ModernGPU SPMV",
+       cxxopts::value<bool>()->default_value("false"))  // MGPU
+      ("cusparse", "Run cuSparse SPMV",
+       cxxopts::value<bool>()->default_value("false"))  // cuSparse
+      ("tiled", "Run Tiled SPMV",
+       cxxopts::value<bool>()->default_value("false"))  // Tiled
+      ("p,pin", "Use Ampere L2 cache pinning",
+       cxxopts::value<bool>()->default_value("false"))  // Ampere L2
+      ("d,device", "Device to run on",
        cxxopts::value<int>()->default_value("0"))  // GPU
       ("v,verbose", "Verbose output",
-       cxxopts::value<bool>()->default_value("false"))  // Verbose (not used)
+       cxxopts::value<bool>()->default_value("false"))  // Verbose
       ("h,help", "Print help");                         // Help
 
   auto args = options.parse(num_arguments, argument_array);
@@ -126,21 +140,19 @@ void test_spmv(int num_arguments, char** argument_array) {
     std::exit(0);
   }
 
-  // TODO set the GPU appropriately
-
   // Get the number of GPUs in the system
   int num_gpus = 0;
   cudaGetDeviceCount(&num_gpus);
   std::cout << "Number of GPUs: " << num_gpus << std::endl;
 
   // Check if the GPU is valid
-  if (args["gpu"].as<int>() >= num_gpus) {
+  if (args["device"].as<int>() >= num_gpus) {
     std::cout << "Invalid GPU" << std::endl;
     return;
   }
 
-  printf("Using GPU %d\n", args["gpu"].as<int>());
-  CHECK_CUDA(cudaSetDevice(args["gpu"].as<int>()));
+  printf("Using GPU %d\n", args["device"].as<int>());
+  CHECK_CUDA(cudaSetDevice(args["device"].as<int>()));
 
   std::string filename = "";
   if (args.count("market") == 1) {
@@ -207,24 +219,26 @@ void test_spmv(int num_arguments, char** argument_array) {
 
   bool cpu_verify = true;
   bool debug = true;
-  bool ampere_cache = args["cache"].as<bool>();
+  bool ampere_cache = args["pin"].as<bool>();
 
   // NOTE: Can't seem to pass the args into the function here
-  // double elapsed_cusparse = test_spmv(CUSPARSE, csr, x_device, y_device,
-  //                                     cpu_verify, debug, ampere_cache);
+  double elapsed_cusparse = test_spmv(CUSPARSE, csr, x_device, y_device,
+                                      cpu_verify, debug, ampere_cache, args);
 
-  double elapsed_cub =
-      test_spmv(CUB, csr, x_device, y_device, cpu_verify, debug, ampere_cache);
+  // double elapsed_cub = test_spmv(CUB, csr, x_device, y_device, cpu_verify,
+  //                                debug, ampere_cache, args);
 
   // double elapsed_mgpu = test_spmv(MGPU, csr, x_device, y_device,
-  //                                 cpu_verify, debug, ampere_cache);
+  //                                 cpu_verify, debug, ampere_cache, args);
 
-  double elapsed_tiled = test_spmv(TILED, csr, x_device, y_device, cpu_verify,
-                                   debug, ampere_cache);
+  // double elapsed_tiled = test_spmv(TILED, csr, x_device, y_device, cpu_verify,
+  //                                  debug, ampere_cache, args);
 
   // printf("%s,%d,%d,%d,%f,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
   //        csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
   //        elapsed_cub, elapsed_mgpu, elapsed_tiled);
+
+  // Reset the device
 }
 
 int main(int argc, char** argv) {
