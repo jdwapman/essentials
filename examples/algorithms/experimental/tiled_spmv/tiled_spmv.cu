@@ -216,20 +216,30 @@ void test_spmv(int num_arguments, char** argument_array) {
   // --
   // Run the algorithm
 
-  // NOTE: Can't seem to pass the args into the function here
-  double elapsed_cusparse = test_spmv(CUSPARSE, csr, x_device, y_device, args);
+  double elapsed_cusparse = 0;
+  double elapsed_cub = 0;
+  double elapsed_mgpu = 0;
+  double elapsed_tiled = 0;
 
-  double elapsed_cub = test_spmv(CUB, csr, x_device, y_device, args);
+  if (args.count("cusparse")) {
+    elapsed_cusparse = test_spmv(CUSPARSE, csr, x_device, y_device, args);
+  }
 
-  double elapsed_mgpu = test_spmv(MGPU, csr, x_device, y_device, args);
+  if (args.count("cub")) {
+    elapsed_cub = test_spmv(CUB, csr, x_device, y_device, args);
+  }
 
-  double elapsed_tiled = test_spmv(TILED, csr, x_device, y_device, args);
+  if (args.count("mgpu")) {
+    elapsed_mgpu = test_spmv(MGPU, csr, x_device, y_device, args);
+  }
+
+  if (args.count("tiled")) {
+    elapsed_tiled = test_spmv(TILED, csr, x_device, y_device, args);
+  }
 
   printf("%s,%d,%d,%d,%f,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
          csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
          elapsed_cub, elapsed_mgpu, elapsed_tiled);
-
-  // Reset the device
 }
 
 int main(int argc, char** argv) {
