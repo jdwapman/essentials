@@ -9,12 +9,13 @@
 #include "test_tiled.h"
 #include "spmv_utils.cuh"
 #include "launch_params.cuh"
+#include <gunrock/algorithms/spmv.hxx>
 
 using namespace gunrock;
 // using namespace experimental;
 using namespace memory;
 
-enum SPMV_t { MGPU, CUB, CUSPARSE, TILED };
+enum SPMV_t { MGPU, CUB, CUSPARSE, GUNROCK, TILED };
 enum LB_t {
   THREAD_PER_ROW,
   WARP_PER_ROW,
@@ -58,6 +59,21 @@ double test_spmv(SPMV_t spmv_impl,
   } else if (spmv_impl == TILED) {
     printf("=== RUNNING TILED SPMV ===\n");
     elapsed_time = spmv_tiled(stream, sparse_matrix, d_input, d_output, pargs);
+  } else if (spmv_impl == GUNROCK) {
+    printf("=== RUNNING GUNROCK SPMV ===\n");
+    auto G = graph::build::from_csr<memory_space_t::device, graph::view_t::csr>(
+        sparse_matrix.number_of_rows, sparse_matrix.number_of_columns,
+        sparse_matrix.number_of_nonzeros,
+        sparse_matrix.row_offsets.data().get(),
+        sparse_matrix.column_indices.data().get(),
+        sparse_matrix.nonzero_values.data().get());
+
+    // Create the context
+    std::shared_ptr<cuda::multi_context_t> context =
+        std::shared_ptr<cuda::multi_context_t>(
+            new cuda::multi_context_t(0, stream));
+    elapsed_time = gunrock::spmv::run(G, d_input.data().get(),
+                                      d_output.data().get(), context);
   } else {
     std::cout << "Unsupported SPMV implementation" << std::endl;
   }
@@ -69,7 +85,7 @@ double test_spmv(SPMV_t spmv_impl,
   if (pargs.count("verbose"))
     printf("GPU finished in %lf ms\n", elapsed_time);
 
-  //   Copy argss to CPU
+  // Copy data to CPU
   if (pargs.count("cpu")) {
     thrust::host_vector<float> h_output = d_output;
     thrust::host_vector<float> h_input = d_input;
@@ -121,6 +137,8 @@ void test_spmv(int num_arguments, char** argument_array) {
        cxxopts::value<bool>()->default_value("false"))  // MGPU
       ("cusparse", "Run cuSparse SPMV",
        cxxopts::value<bool>()->default_value("false"))  // cuSparse
+      ("gunrock", "Run Gunrock SPMV",
+       cxxopts::value<bool>()->default_value("false"))  // Gunrock
       ("tiled", "Run Tiled SPMV",
        cxxopts::value<bool>()->default_value("false"))  // Tiled
       ("p,pin", "Use Ampere L2 cache pinning",
@@ -221,6 +239,7 @@ void test_spmv(int num_arguments, char** argument_array) {
   double elapsed_cusparse = 0;
   double elapsed_cub = 0;
   double elapsed_mgpu = 0;
+  double elapsed_gunrock = 0;
   double elapsed_tiled = 0;
 
   if (args.count("cusparse")) {
@@ -233,6 +252,10 @@ void test_spmv(int num_arguments, char** argument_array) {
 
   if (args.count("mgpu")) {
     elapsed_mgpu = test_spmv(MGPU, csr, x_device, y_device, args);
+  }
+
+  if (args.count("gunrock")) {
+    elapsed_gunrock = test_spmv(GUNROCK, csr, x_device, y_device, args);
   }
 
   if (args.count("tiled")) {
