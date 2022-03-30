@@ -469,7 +469,8 @@ class TileIterator {
         auto active = cg::coalesced_threads();
 
         vector_t warp_val =
-            __ldcs(&(this->graph.get_nonzero_values()[offset])) *
+            __ldcs(&(this->graph
+                         .get_nonzero_values()[offset + (threadIdx.x % 32)])) *
             this->input[col];
 
         auto warp_reduce_val =
@@ -562,7 +563,8 @@ class TileIterator {
         auto active = cg::coalesced_threads();
 
         vector_t warp_val =
-            __ldcs(&(this->graph.get_nonzero_values()[offset])) *
+            __ldcs(&(this->graph
+                         .get_nonzero_values()[offset + (threadIdx.x % 32)])) *
             this->input[col];
 
         auto warp_reduce_val =

@@ -220,7 +220,11 @@ void test_spmv(int num_arguments, char** argument_array) {
   // Print the matrix stats
   printf("Matrix: %s\n", filename.c_str());
   printf("- Rows: %d\n", csr.number_of_rows);
+  printf("- Columns: %d\n", csr.number_of_columns);
   printf("- Nonzeros: %d\n", csr.number_of_nonzeros);
+  display(csr.row_offsets, "row_offsets");
+  display(csr.column_indices, "column_indices");
+  display(csr.nonzero_values, "values");
 
   thrust::host_vector<nonzero_t> x_host(csr.number_of_columns);
 
@@ -262,9 +266,9 @@ void test_spmv(int num_arguments, char** argument_array) {
     elapsed_tiled = test_spmv(TILED, csr, x_device, y_device, args);
   }
 
-  printf("%s,%d,%d,%d,%f,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
+  printf("%s,%d,%d,%d,%f,%f,%f,%f,%f\n", filename.c_str(), csr.number_of_rows,
          csr.number_of_columns, csr.number_of_nonzeros, elapsed_cusparse,
-         elapsed_cub, elapsed_mgpu, elapsed_tiled);
+         elapsed_cub, elapsed_mgpu, elapsed_gunrock, elapsed_tiled);
 }
 
 int main(int argc, char** argv) {
