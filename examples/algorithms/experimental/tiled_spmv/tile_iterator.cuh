@@ -525,9 +525,6 @@ class TileIterator {
       // Check if the row is completely empty
       if (this->shmem_row_offsets_start[row_idx] ==
           this->shmem_row_offsets_end[row_idx]) {
-        if(threadIdx.x == 0){
-          printf("Row skipped\n");
-        }
         // Get the next row from the queue
         if (threadIdx.x % 32 == 0) {
           row_idx = atomicAdd(&(this->row_queue[0]), 1);
@@ -684,6 +681,12 @@ class TileIterator {
   // Iterate all tiles within level of the hierarchy (h0 is the Matrix)
   __device__ __forceinline__ void process_all_tiles() {
     auto matrix_tile_index = make_tile_index(0, 0);
+
+    if (blockIdx.x == 0 && threadIdx.x == 0) {
+      printf("Number of child row tiles: %d\n",
+             tile_layout.num_child_row_tiles(matrix_tile_index));
+    }
+
     process_all_tiles_at_hierarchy(matrix_tile_index);
   }
 

@@ -17,23 +17,24 @@ template <typename graph_t, typename vector_t>
 __global__ void spmv_tiled_kernel(graph_t graph,
                                   vector_t* input,
                                   vector_t* output,
-                                  size_t tile_row_size,
-                                  size_t tile_col_size,
+                                  int tile_row_size,
+                                  int tile_col_size,
                                   size_t shmem_size) {
   // Store the output in shared memory
   using row_t = typename graph_t::vertex_type;
   extern __shared__ row_t shmem[];
 
-  // Set up the tiles
-
   auto base_layout =
       make_layout(graph.get_number_of_rows(), graph.get_number_of_columns());
   auto device_batch_tiled_layout = base_layout.tile(
-      tile_row_size * blockDim.x, graph.get_number_of_columns());
-  auto device_tiled_layout =
-      device_batch_tiled_layout.tile(tile_row_size * blockDim.x, tile_col_size);
-  auto block_tiled_layout =
-      device_tiled_layout.tile(tile_row_size, tile_col_size);
+      min(tile_row_size * gridDim.x, graph.get_number_of_rows()),
+      graph.get_number_of_columns());
+  auto device_tiled_layout = device_batch_tiled_layout.tile(
+      min(tile_row_size * gridDim.x, graph.get_number_of_rows()),
+      min(tile_col_size, graph.get_number_of_columns()));
+  auto block_tiled_layout = device_tiled_layout.tile(
+      min(tile_row_size, graph.get_number_of_rows()),
+      min(tile_col_size, graph.get_number_of_columns()));
 
   auto dims = block_tiled_layout.tiledims;
 
@@ -58,7 +59,11 @@ __global__ void spmv_tiled_kernel(graph_t graph,
 }
 
 template <typename csr_t, typename vector_t, typename args_t>
-double spmv_tiled(cudaStream_t stream, csr_t& csr, vector_t& input, vector_t& output, args_t pargs) {
+double spmv_tiled(cudaStream_t stream,
+                  csr_t& csr,
+                  vector_t& input,
+                  vector_t& output,
+                  args_t pargs) {
   // --
   // Build graph
 
@@ -89,9 +94,9 @@ double spmv_tiled(cudaStream_t stream, csr_t& csr, vector_t& input, vector_t& ou
 
   // Use the max number of threads per block to maximize parallelism over
   // shmem
-
-  numThreadsPerBlock = deviceProp.maxThreadsPerBlock / 4;
-  shmemPerBlock = deviceProp.sharedMemPerBlockOptin / 4;
+  auto target_occupancy = 2;
+  numThreadsPerBlock = deviceProp.maxThreadsPerBlock / target_occupancy;
+  shmemPerBlock = deviceProp.sharedMemPerBlockOptin / target_occupancy;
 
   auto bytes_per_row = 2 * sizeof(row_t) + sizeof(nonzero_t);
   auto rows_per_block = (shmemPerBlock / bytes_per_row) - 1;

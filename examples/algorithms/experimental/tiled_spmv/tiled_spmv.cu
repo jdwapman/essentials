@@ -85,7 +85,7 @@ double test_spmv(SPMV_t spmv_impl,
     }
 
     // Validate
-    int num_errors = check_spmv(cpu_ref, h_output);
+    int num_errors = check_spmv(cpu_ref, h_output, pargs);
 
     // Print the number of errors
     if (pargs.count("verbose"))
@@ -210,6 +210,8 @@ void test_spmv(int num_arguments, char** argument_array) {
   for (size_t idx = 0; idx < x_host.size(); idx++)
     x_host[idx] = rand() % 64;
 
+  // --
+  // Init the vectors
   thrust::device_vector<nonzero_t> x_device = x_host;
   thrust::device_vector<nonzero_t> y_device(csr.number_of_rows);
 

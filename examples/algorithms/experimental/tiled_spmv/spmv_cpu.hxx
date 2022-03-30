@@ -23,23 +23,25 @@ void cpu_spmv(csr_t& A, vector_t& x, vector_t& y) {
 template <typename T>
 static bool equal(T f1, T f2) {
   // return(std::fabs(f1 - f2) <= 1e-4);
-//   T eps = std::numeric_limits<T>::epsilon() * 100;
-//   // // T eps = 0.2;
+  //   T eps = std::numeric_limits<T>::epsilon() * 100;
+  //   // // T eps = 0.2;
   T eps = 1e-3;
   return (std::fabs(f1 - f2) <= eps * std::fmax(std::fabs(f1), std::fabs(f2)));
 }
 
-template <typename vector_t>
-int check_spmv(vector_t& a, vector_t& b) {
+template <typename vector_t, typename args_t>
+int check_spmv(vector_t& a, vector_t& b, args_t args) {
   int num_errors = 0;
   for (size_t i = 0; i < a.size(); i++) {
     if (!equal(a[i], b[i])) {
-      std::cout << "i = " << i << ": " << std::setprecision(20) << a[i]
-                << " != " << b[i] << std::endl;
-      std::cout << "Error = " << std::fabs(a[i] - b[i]) << std::endl;
-      double error_percent =
-          std::fabs(a[i] - b[i]) / std::fmax(std::fabs(a[i]), std::fabs(b[i]));
-      std::cout << "Error % = " << error_percent << std::endl;
+      if (args.count("verbose")) {
+        // std::cout << "i = " << i << ": " << std::setprecision(20) << a[i]
+        //           << " != " << b[i] << std::endl;
+        // std::cout << "Error = " << std::fabs(a[i] - b[i]) << std::endl;
+        // double error_percent = std::fabs(a[i] - b[i]) /
+        //                        std::fmax(std::fabs(a[i]), std::fabs(b[i]));
+        // std::cout << "Error % = " << error_percent << std::endl;
+      }
       num_errors++;
     }
   }
