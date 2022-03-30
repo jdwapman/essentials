@@ -6,7 +6,7 @@
 #include "spmv_cusparse.cuh"
 #include "spmv_cub.cuh"
 #include "spmv_moderngpu.cuh"
-#include "test_tiled.h"
+#include "spmv_tiled.cuh"
 #include "spmv_utils.cuh"
 #include "launch_params.cuh"
 #include <gunrock/algorithms/spmv.hxx>
