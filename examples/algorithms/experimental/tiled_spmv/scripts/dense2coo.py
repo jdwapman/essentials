@@ -54,4 +54,12 @@ else:
 sparse_matrix = csr_matrix(mat)
 
 # Write to disk
-sio.mmwrite(args.file, sparse_matrix)
+# sio.mmwrite(args.file, sparse_matrix)
+
+# Open the file
+with open(args.file, 'w') as f:
+    f.write("%%MatrixMarket matrix coordinate real general\n")
+    f.write("%d %d %d\n" % (args.rows, args.cols, sparse_matrix.nnz))
+    for i in range(sparse_matrix.shape[0]):
+        for j in range(sparse_matrix.indptr[i], sparse_matrix.indptr[i+1]):
+            f.write("%d %d %f\n" % (i+1, sparse_matrix.indices[j]+1, sparse_matrix.data[j]))
