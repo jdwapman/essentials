@@ -2,6 +2,7 @@
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#include <cooperative_groups/memcpy_async.h>
 #include "spmv_utils.cuh"
 #include <tuple>
 

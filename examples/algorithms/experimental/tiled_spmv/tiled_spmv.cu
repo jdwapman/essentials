@@ -11,9 +11,8 @@
 #include "launch_params.cuh"
 #include <gunrock/algorithms/spmv.hxx>
 
-using namespace gunrock;
 // using namespace experimental;
-using namespace memory;
+// using namespace memory;
 
 enum SPMV_t { MGPU, CUB, CUSPARSE, GUNROCK, TILED };
 enum LB_t {
@@ -61,7 +60,7 @@ double test_spmv(SPMV_t spmv_impl,
     elapsed_time = spmv_tiled(stream, sparse_matrix, d_input, d_output, pargs);
   } else if (spmv_impl == GUNROCK) {
     printf("=== RUNNING GUNROCK SPMV ===\n");
-    auto G = graph::build::from_csr<memory_space_t::device, graph::view_t::csr>(
+    auto G = gunrock::graph::build::from_csr<gunrock::memory_space_t::device, gunrock::graph::view_t::csr>(
         sparse_matrix.number_of_rows, sparse_matrix.number_of_columns,
         sparse_matrix.number_of_nonzeros,
         sparse_matrix.row_offsets.data().get(),
@@ -69,9 +68,9 @@ double test_spmv(SPMV_t spmv_impl,
         sparse_matrix.nonzero_values.data().get());
 
     // Create the context
-    std::shared_ptr<cuda::multi_context_t> context =
-        std::shared_ptr<cuda::multi_context_t>(
-            new cuda::multi_context_t(0, stream));
+    std::shared_ptr<gunrock::cuda::multi_context_t> context =
+        std::shared_ptr<gunrock::cuda::multi_context_t>(
+            new gunrock::cuda::multi_context_t(0, stream));
     elapsed_time = gunrock::spmv::run(G, d_input.data().get(),
                                       d_output.data().get(), context);
   } else {
