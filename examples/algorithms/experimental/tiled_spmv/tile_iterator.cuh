@@ -314,26 +314,52 @@ class TileIterator {
     auto matrix_coord = tile_layout.remap_point(
         Point<int, int>(0, 0), block_tile_idx, (size_t)TILE_MATRIX);
 
-// Get the boundaries of the tile: the minimum of the number of rows in
-// the block and the remainder of the number of rows in graph
+    // Get the boundaries of the tile: the minimum of the number of rows in
+    // the block and the remainder of the number of rows in graph
+
+    // Ampere async copy
+    auto block_group = cg::this_thread_block();
+
+    auto size =
+        min(rows_in_block, graph.get_number_of_rows() - matrix_coord.row) *
+        sizeof(shmem_t);
+
+    // if (matrix_coord.row < graph.get_number_of_rows()) {
+    //   printf("Copying %d values\n",
+    //          (int)min(rows_in_block,
+    //                   graph.get_number_of_rows() - matrix_coord.row));
+    // }
+
+    if (matrix_coord.row < graph.get_number_of_rows()) {
+      cg::memcpy_async(block_group,                                         //
+                       shmem_row_offsets_start,                             //
+                       &(this->graph.get_row_offsets()[matrix_coord.row]),  //
+                       size);
+      cg::memcpy_async(
+          block_group,                                             // CG
+          shmem_row_offsets_end,                                   // dst
+          &(this->graph.get_row_offsets()[matrix_coord.row + 1]),  // src
+          size);
+      cg::wait(block_group);
+    }
 
 // Iterate and copy to shared
 // TODO convert to ampere async copy
 // TODO use vector loads?
 // TODO don't need to read in starts and stops separately. Combine for
 //      efficiency
-// TODO use streaming loads? (This might conflict with async copy)
 #pragma unroll
     for (auto row_idx = threadIdx.x;
          row_idx < rows_in_block &&
          matrix_coord.row + row_idx < graph.get_number_of_rows();
          row_idx += blockDim.x) {
-      // Copy the row offset to shared memory. Load streaming since we won't
-      // reuse this
-      this->shmem_row_offsets_start[row_idx] =
-          __ldcs(&(this->graph.get_row_offsets()[matrix_coord.row + row_idx]));
-      this->shmem_row_offsets_end[row_idx] = __ldcs(
-          &(this->graph.get_row_offsets()[matrix_coord.row + row_idx + 1]));
+      // Copy the row offset to shared memory. Load streaming since we
+      // won't
+      // // reuse this
+      // this->shmem_row_offsets_start[row_idx] =
+      //     __ldcs(&(this->graph.get_row_offsets()[matrix_coord.row + row_idx]));
+      // this->shmem_row_offsets_end[row_idx] = __ldcs(
+      //     &(this->graph.get_row_offsets()[matrix_coord.row + row_idx + 1]));
       this->shmem_output[row_idx] = 0;
     }
 
