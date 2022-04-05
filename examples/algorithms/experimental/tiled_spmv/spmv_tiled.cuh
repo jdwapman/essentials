@@ -24,23 +24,61 @@ __global__ void spmv_tiled_kernel(graph_t graph,
   using row_t = typename graph_t::vertex_type;
   extern __shared__ row_t shmem[];
 
-  auto base_layout =
+
+
+  print_device("New tile row size: %d\n", (int)tile_row_size);
+
+  // Just the matrix dimensions
+  auto matrix_layout =
       make_layout(graph.get_number_of_rows(), graph.get_number_of_columns());
-  auto device_batch_tiled_layout = base_layout.tile(
+
+  // Use the actual row tile size
+  auto spatial_layout = matrix_layout.tile(
       min(tile_row_size * gridDim.x, graph.get_number_of_rows()),
       graph.get_number_of_columns());
-  auto device_tiled_layout = device_batch_tiled_layout.tile(
+
+  // Use the actual row tile size
+  auto temporal_layout = spatial_layout.tile(
       min(tile_row_size * gridDim.x, graph.get_number_of_rows()),
-      min(tile_col_size, graph.get_number_of_columns()));
-  auto block_tiled_layout = device_tiled_layout.tile(
-      min(tile_row_size, graph.get_number_of_rows()),
-      min(tile_col_size, graph.get_number_of_columns()));
+      graph.get_number_of_columns());
 
-  auto dims = block_tiled_layout.tiledims;
+  // BUT if the entire matrix will fit in one block, we want to redistribute
+  // the rows among other blocks
 
-  TileIterator<graph_t, vector_t, row_t, decltype(block_tiled_layout)>
+  // Remap the tile row size so that all blocks have work
+  tile_row_size = min(tile_row_size, (int)ceil((float)graph.get_number_of_rows() / (float)gridDim.x));
+//   tile_row_size = max(tile_row_size, 1);
+
+  auto block_temporal_layout =
+      temporal_layout.tile(min(tile_row_size, graph.get_number_of_rows()),
+                           graph.get_number_of_columns());
+
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    printf("(%d,%d), (%d,%d), (%d,%d), (%d,%d)\n",
+           (int)block_temporal_layout.num_child_row_tiles(0),
+           (int)block_temporal_layout.num_child_col_tiles(0),
+           (int)block_temporal_layout.num_child_row_tiles(1),
+           (int)block_temporal_layout.num_child_col_tiles(1),
+           (int)block_temporal_layout.num_child_row_tiles(2),
+           (int)block_temporal_layout.num_child_col_tiles(2),
+           (int)block_temporal_layout.num_child_row_tiles(3),
+           (int)block_temporal_layout.num_child_col_tiles(3));
+
+    // Now print the tile sizes
+    printf("(%d,%d), (%d,%d), (%d,%d), (%d,%d)\n",
+           (int)block_temporal_layout.rows_in_tile(0),
+           (int)block_temporal_layout.cols_in_tile(0),
+           (int)block_temporal_layout.rows_in_tile(1),
+           (int)block_temporal_layout.cols_in_tile(1),
+           (int)block_temporal_layout.rows_in_tile(2),
+           (int)block_temporal_layout.cols_in_tile(2),
+           (int)block_temporal_layout.rows_in_tile(3),
+           (int)block_temporal_layout.cols_in_tile(3));
+  }
+
+  TileIterator<graph_t, vector_t, row_t, decltype(block_temporal_layout)>
       matrix_tile_iterator(graph, input, output, shmem, shmem_size,
-                           block_tiled_layout);
+                           block_temporal_layout);
 
   matrix_tile_iterator.process_all_tiles();
 

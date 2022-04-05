@@ -295,10 +295,6 @@ class TileIterator {
 
   template <typename tile_index_t>
   __device__ __forceinline__ void load_tile(tile_index_t parent_tile_idx) {
-    // if (threadIdx.x == 0 && blockIdx.x == 0) {
-    //   printf("Loading data into shared memory\n");
-    // }
-
     // If we're loading the first tile in a batch, the device tile is by
     // default  (0, 0) relative to the parent
     auto device_tile_idx = make_tile_index(0, 0, parent_tile_idx);
@@ -324,12 +320,6 @@ class TileIterator {
         min(rows_in_block, graph.get_number_of_rows() - matrix_coord.row) *
         sizeof(shmem_t);
 
-    // if (matrix_coord.row < graph.get_number_of_rows()) {
-    //   printf("Copying %d values\n",
-    //          (int)min(rows_in_block,
-    //                   graph.get_number_of_rows() - matrix_coord.row));
-    // }
-
     if (matrix_coord.row < graph.get_number_of_rows()) {
       cg::memcpy_async(block_group,                                         //
                        shmem_row_offsets_start,                             //
@@ -344,8 +334,6 @@ class TileIterator {
     }
 
 // Iterate and copy to shared
-// TODO convert to ampere async copy
-// TODO use vector loads?
 // TODO don't need to read in starts and stops separately. Combine for
 //      efficiency
 #pragma unroll
@@ -357,7 +345,8 @@ class TileIterator {
       // won't
       // // reuse this
       // this->shmem_row_offsets_start[row_idx] =
-      //     __ldcs(&(this->graph.get_row_offsets()[matrix_coord.row + row_idx]));
+      //     __ldcs(&(this->graph.get_row_offsets()[matrix_coord.row +
+      //     row_idx]));
       // this->shmem_row_offsets_end[row_idx] = __ldcs(
       //     &(this->graph.get_row_offsets()[matrix_coord.row + row_idx + 1]));
       this->shmem_output[row_idx] = 0;
@@ -476,6 +465,9 @@ class TileIterator {
               (parent_tile_idx.col[TILE_TEMPORAL] + 1) * cols_in_block);
 
       auto offset = this->shmem_row_offsets_start[row_idx];
+
+      // TODO hardcode this to 10000 for debugging and remove boundary checks.
+      // Want to get performance parity for dense datasets
 
       while (true) {
         // Each thread gets a column. Nice and coalesced
@@ -673,12 +665,16 @@ class TileIterator {
       // We aren't iterating over the tile anymore, we're now processing it
       // and diving into parallel work
       // process_tile_thread_per_row(parent_tile_idx);
-      // process_tile_warp_per_row(parent_tile_idx);
-      process_tile_warp_per_row_queue(parent_tile_idx);
+      process_tile_warp_per_row(parent_tile_idx);
+      // process_tile_warp_per_row_queue(parent_tile_idx);
 
       // Get the current grid and sync
       auto grid = cg::this_grid();
       grid.sync();
+      if (blockIdx.x == 0 && threadIdx.x == 0) {
+        printf("Syncing\n");
+        printf("%d\n", (int)tile_layout.num_child_row_tiles(parent_tile_idx));
+      }
     } else {
       // Tile indexer to the child tiles if the parent tile
       auto child_tile_idx = make_tile_index(0, 0, parent_tile_idx);
@@ -710,11 +706,6 @@ class TileIterator {
   // Iterate all tiles within level of the hierarchy (h0 is the Matrix)
   __device__ __forceinline__ void process_all_tiles() {
     auto matrix_tile_index = make_tile_index(0, 0);
-
-    if (blockIdx.x == 0 && threadIdx.x == 0) {
-      printf("Number of child row tiles: %d\n",
-             tile_layout.num_child_row_tiles(matrix_tile_index));
-    }
 
     process_all_tiles_at_hierarchy(matrix_tile_index);
   }

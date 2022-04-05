@@ -151,7 +151,7 @@ void test_spmv(int num_arguments, char** argument_array) {
   auto args = options.parse(num_arguments, argument_array);
 
   if (args.count("help") ||
-      (args.count("market") == 0 && args.count("csr") == 0)) {
+      (args.count("market") == 0 && args.count("bin") == 0)) {
     std::cout << options.help({""}) << std::endl;
     std::exit(0);
   }
@@ -178,8 +178,8 @@ void test_spmv(int num_arguments, char** argument_array) {
       std::cout << options.help({""}) << std::endl;
       std::exit(0);
     }
-  } else if (args.count("csr") == 1) {
-    filename = args["csr"].as<std::string>();
+  } else if (args.count("bin") == 1) {
+    filename = args["bin"].as<std::string>();
     if (util::is_binary_csr(filename)) {
     } else {
       std::cout << options.help({""}) << std::endl;
