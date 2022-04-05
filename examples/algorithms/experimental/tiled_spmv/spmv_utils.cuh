@@ -252,7 +252,7 @@ cudaStream_t setup_ampere_cache(vector_t data) {
     stream_attribute.accessPolicyWindow.hitProp =
         cudaAccessPropertyPersisting;  // Persistence Property
     stream_attribute.accessPolicyWindow.missProp =
-        cudaAccessPropertyPersisting;  // Type of access property on cache miss
+        cudaAccessPropertyStreaming;  // Type of access property on cache miss
 
     CHECK_CUDA(cudaStreamSetAttribute(
         stream, cudaStreamAttributeAccessPolicyWindow,

@@ -132,7 +132,7 @@ double spmv_tiled(cudaStream_t stream,
 
   // Use the max number of threads per block to maximize parallelism over
   // shmem
-  auto target_occupancy = 4;
+  auto target_occupancy = 6;
   numThreadsPerBlock = deviceProp.maxThreadsPerBlock / target_occupancy;
   shmemPerBlock = deviceProp.sharedMemPerBlockOptin / target_occupancy;
 
