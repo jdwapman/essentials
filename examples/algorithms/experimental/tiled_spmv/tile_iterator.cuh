@@ -320,6 +320,10 @@ class TileIterator {
         min(rows_in_block, graph.get_number_of_rows() - matrix_coord.row) *
         sizeof(shmem_t);
 
+    // if(threadIdx.x == 0) {
+    //   printf("Block %d loading rows %d through %d\n", (int)blockIdx.x, (int)matrix_coord.row, (int)(matrix_coord.row + min(rows_in_block, graph.get_number_of_rows()))-1);
+    // }
+
     if (matrix_coord.row < graph.get_number_of_rows()) {
       cg::memcpy_async(block_group,                                         //
                        shmem_row_offsets_start,                             //
@@ -671,10 +675,6 @@ class TileIterator {
       // Get the current grid and sync
       auto grid = cg::this_grid();
       grid.sync();
-      if (blockIdx.x == 0 && threadIdx.x == 0) {
-        printf("Syncing\n");
-        printf("%d\n", (int)tile_layout.num_child_row_tiles(parent_tile_idx));
-      }
     } else {
       // Tile indexer to the child tiles if the parent tile
       auto child_tile_idx = make_tile_index(0, 0, parent_tile_idx);

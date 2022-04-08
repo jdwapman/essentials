@@ -37,6 +37,7 @@ set(PROJECT_DEPS_DIR externals)
 include(${PROJECT_SOURCE_DIR}/cmake/FetchThrustCUB.cmake)
 include(${PROJECT_SOURCE_DIR}/cmake/FetchModernGPU.cmake)
 include(${PROJECT_SOURCE_DIR}/cmake/FetchCXXOpts.cmake)
+include(${PROJECT_SOURCE_DIR}/cmake/FetchRapidJSON.cmake)
 # end /* Include cmake modules */
 
 ## Set the directory where the binaries will be stored

@@ -9,6 +9,7 @@
 #include "spmv_tiled.cuh"
 #include "spmv_utils.cuh"
 #include "launch_params.cuh"
+#include "log.h"
 #include <gunrock/algorithms/spmv.hxx>
 
 // using namespace experimental;
@@ -94,9 +95,9 @@ double test_spmv(SPMV_t spmv_impl,
     cpu_spmv(sparse_matrix, h_input, cpu_ref);
 
     if (pargs.count("verbose")) {
-      display(d_input, "d_input");
-      display(d_output, "d_output");
-      display(cpu_ref, "cpu_ref");
+      display(d_input, "d_input", 40);
+      display(d_output, "d_output", 40);
+      display(cpu_ref, "cpu_ref", 40);
     }
 
     // Validate
@@ -221,9 +222,9 @@ void test_spmv(int num_arguments, char** argument_array) {
   printf("- Rows: %d\n", csr.number_of_rows);
   printf("- Columns: %d\n", csr.number_of_columns);
   printf("- Nonzeros: %d\n", csr.number_of_nonzeros);
-  display(csr.row_offsets, "row_offsets");
-  display(csr.column_indices, "column_indices");
-  display(csr.nonzero_values, "values");
+  display(csr.row_offsets, "row_offsets", 40);
+  display(csr.column_indices, "column_indices", 40);
+  display(csr.nonzero_values, "values", 40);
 
   thrust::host_vector<nonzero_t> x_host(csr.number_of_columns);
 

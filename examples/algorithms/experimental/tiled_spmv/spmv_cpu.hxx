@@ -35,12 +35,12 @@ int check_spmv(vector_t& a, vector_t& b, args_t args) {
   for (size_t i = 0; i < a.size(); i++) {
     if (!equal(a[i], b[i])) {
       if (args.count("verbose")) {
-        // std::cout << "i = " << i << ": " << std::setprecision(20) << a[i]
-        //           << " != " << b[i] << std::endl;
-        // std::cout << "Error = " << std::fabs(a[i] - b[i]) << std::endl;
-        // double error_percent = std::fabs(a[i] - b[i]) /
-        //                        std::fmax(std::fabs(a[i]), std::fabs(b[i]));
-        // std::cout << "Error % = " << error_percent << std::endl;
+        std::cout << "i = " << i << ": " << std::setprecision(20) << a[i]
+                  << " != " << b[i] << std::endl;
+        std::cout << "Error = " << std::fabs(a[i] - b[i]) << std::endl;
+        double error_percent = std::fabs(a[i] - b[i]) /
+                               std::fmax(std::fabs(a[i]), std::fabs(b[i]));
+        std::cout << "Error % = " << error_percent << std::endl;
       }
       num_errors++;
     }

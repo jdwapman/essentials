@@ -38,13 +38,13 @@ namespace cg = cooperative_groups;
   }
 
 template <typename vector_t>
-void display(vector_t v, std::string name, bool verbose = true) {
+void display(vector_t v, std::string name, int count, bool verbose = true) {
   if (verbose) {
     std::cout << name << " = [ ";
-    for (size_t i = 0; i < v.size() && (i < 40); i++)
+    for (size_t i = 0; i < v.size() && (i < count); i++)
       std::cout << v[i] << " ";
 
-    if (v.size() >= 40) {
+    if (v.size() >= count) {
       std::cout << "...";
     }
     std::cout << "]" << std::endl;

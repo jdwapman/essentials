@@ -14,17 +14,16 @@ using namespace memory;
 // The parent class for all tiled iteration
 
 template <typename graph_t, typename vector_t>
-__global__ void spmv_tiled_kernel(graph_t graph,
-                                  vector_t* input,
-                                  vector_t* output,
-                                  int tile_row_size,
-                                  int tile_col_size,
-                                  size_t shmem_size) {
+__global__ void __launch_bounds__(1024, 3)
+    spmv_tiled_kernel(graph_t graph,
+                      vector_t* input,
+                      vector_t* output,
+                      int tile_row_size,
+                      int tile_col_size,
+                      size_t shmem_size) {
   // Store the output in shared memory
   using row_t = typename graph_t::vertex_type;
   extern __shared__ row_t shmem[];
-
-
 
   print_device("New tile row size: %d\n", (int)tile_row_size);
 
@@ -46,35 +45,36 @@ __global__ void spmv_tiled_kernel(graph_t graph,
   // the rows among other blocks
 
   // Remap the tile row size so that all blocks have work
-  tile_row_size = min(tile_row_size, (int)ceil((float)graph.get_number_of_rows() / (float)gridDim.x));
-//   tile_row_size = max(tile_row_size, 1);
+  tile_row_size =
+      min(tile_row_size,
+          (int)ceil((float)graph.get_number_of_rows() / (float)gridDim.x));
 
   auto block_temporal_layout =
       temporal_layout.tile(min(tile_row_size, graph.get_number_of_rows()),
                            graph.get_number_of_columns());
 
-  if (threadIdx.x == 0 && blockIdx.x == 0) {
-    printf("(%d,%d), (%d,%d), (%d,%d), (%d,%d)\n",
-           (int)block_temporal_layout.num_child_row_tiles(0),
-           (int)block_temporal_layout.num_child_col_tiles(0),
-           (int)block_temporal_layout.num_child_row_tiles(1),
-           (int)block_temporal_layout.num_child_col_tiles(1),
-           (int)block_temporal_layout.num_child_row_tiles(2),
-           (int)block_temporal_layout.num_child_col_tiles(2),
-           (int)block_temporal_layout.num_child_row_tiles(3),
-           (int)block_temporal_layout.num_child_col_tiles(3));
+  //   if (threadIdx.x == 0 && blockIdx.x == 0) {
+  //     printf("(%d,%d), (%d,%d), (%d,%d), (%d,%d)\n",
+  //            (int)block_temporal_layout.num_child_row_tiles(0),
+  //            (int)block_temporal_layout.num_child_col_tiles(0),
+  //            (int)block_temporal_layout.num_child_row_tiles(1),
+  //            (int)block_temporal_layout.num_child_col_tiles(1),
+  //            (int)block_temporal_layout.num_child_row_tiles(2),
+  //            (int)block_temporal_layout.num_child_col_tiles(2),
+  //            (int)block_temporal_layout.num_child_row_tiles(3),
+  //            (int)block_temporal_layout.num_child_col_tiles(3));
 
-    // Now print the tile sizes
-    printf("(%d,%d), (%d,%d), (%d,%d), (%d,%d)\n",
-           (int)block_temporal_layout.rows_in_tile(0),
-           (int)block_temporal_layout.cols_in_tile(0),
-           (int)block_temporal_layout.rows_in_tile(1),
-           (int)block_temporal_layout.cols_in_tile(1),
-           (int)block_temporal_layout.rows_in_tile(2),
-           (int)block_temporal_layout.cols_in_tile(2),
-           (int)block_temporal_layout.rows_in_tile(3),
-           (int)block_temporal_layout.cols_in_tile(3));
-  }
+  //     // Now print the tile sizes
+  //     printf("(%d,%d), (%d,%d), (%d,%d), (%d,%d)\n",
+  //            (int)block_temporal_layout.rows_in_tile(0),
+  //            (int)block_temporal_layout.cols_in_tile(0),
+  //            (int)block_temporal_layout.rows_in_tile(1),
+  //            (int)block_temporal_layout.cols_in_tile(1),
+  //            (int)block_temporal_layout.rows_in_tile(2),
+  //            (int)block_temporal_layout.cols_in_tile(2),
+  //            (int)block_temporal_layout.rows_in_tile(3),
+  //            (int)block_temporal_layout.cols_in_tile(3));
+  //   }
 
   TileIterator<graph_t, vector_t, row_t, decltype(block_temporal_layout)>
       matrix_tile_iterator(graph, input, output, shmem, shmem_size,
@@ -132,9 +132,11 @@ double spmv_tiled(cudaStream_t stream,
 
   // Use the max number of threads per block to maximize parallelism over
   // shmem
-  auto target_occupancy = 6;
+  auto target_occupancy = 3;
   numThreadsPerBlock = deviceProp.maxThreadsPerBlock / target_occupancy;
-  shmemPerBlock = deviceProp.sharedMemPerBlockOptin / target_occupancy;
+  shmemPerBlock = deviceProp.sharedMemPerBlockOptin / (target_occupancy+1);
+
+  numThreadsPerBlock = 1024;
 
   auto bytes_per_row = 2 * sizeof(row_t) + sizeof(nonzero_t);
   auto rows_per_block = (shmemPerBlock / bytes_per_row) - 1;
