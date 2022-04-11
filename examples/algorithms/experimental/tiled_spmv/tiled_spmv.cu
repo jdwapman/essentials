@@ -177,18 +177,18 @@ void test_spmv(int num_arguments, char** argument_array) {
     if (util::is_market(filename)) {
     } else {
       std::cout << options.help({""}) << std::endl;
-      std::exit(0);
+      std::exit(1);
     }
   } else if (args.count("bin") == 1) {
     filename = args["bin"].as<std::string>();
     if (util::is_binary_csr(filename)) {
     } else {
       std::cout << options.help({""}) << std::endl;
-      std::exit(0);
+      std::exit(1);
     }
   } else {
     std::cout << options.help({""}) << std::endl;
-    std::exit(0);
+    std::exit(1);
   }
 
   // --
