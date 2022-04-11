@@ -48,13 +48,17 @@ with open("datasets.txt", "r") as datasets:
 
         print("Running command " + benchmark_cmd)
         retval = subprocess.run(benchmark_cmd, shell=True, capture_output=True)
-        # print(retval)
+        print(retval)
 
-        if "Exited with exit code 1" in str(retval.stderr):
+        if "Exited with exit code 1" in str(retval.stderr) or "File is not a sparse matrix" in str(retval.stderr):
             print("Error: " + dataset)
             continue
         else:
             print("Got return code 0 for " + dataset)
+
+            # Print the program output
+            print(retval.stdout.decode("utf-8"))
+
             subprocess.run("cat temp_spmvbenchmark.txt >> " +
                            RESULTS_FILE, shell=True)
 
