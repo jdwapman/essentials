@@ -16,8 +16,6 @@ double spmv_cub(cudaStream_t stream,
   void* d_temp_storage = NULL;
   size_t temp_storage_bytes = 0;
 
-  // Check that I'm actually setting the stream correctly
-
   CHECK_CUDA(cub::DeviceSpmv::CsrMV(
       d_temp_storage, temp_storage_bytes, A.nonzero_values.data().get(),
       A.row_offsets.data().get(), A.column_indices.data().get(),

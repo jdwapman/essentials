@@ -1,34 +1,21 @@
-// #pragma once
+#include <nlohmann/json.hpp>
 
-// #include <rapidjson/document.h>
-// #include <rapidjson/filewritestream.h>
-// #include <rapidjson/prettywriter.h>
-// #include <rapidjson/writer.h>
-// #include <rapidjson/stringbuffer.h>
+// for convenience
+using json = nlohmann::json;
 
-// #include <fstream>
+template <typename args_t>
+void log_cmd_args(json &_json, args_t args)
+{
+  auto args_vec = args.arguments();
 
-// // Use RapidJSON to write a log file.
-// struct JSONLog {
-//   JSONLog(const std::string& _filename) : filename(_filename) {
-//     // Set up a JSON object
-//     alloc = document.GetAllocator();
-//     document.SetObject();
-//   }
+  // Iterate over the arguments
+  _json["argc"] = args_vec.size();
 
-//   // Single key-value pair
-//   // void write(const std::string& key, const std::string& value) {
-//   //   rapidjson::Value k(key.c_str(), alloc);
-//   //   rapidjson::Value v(value.c_str(), alloc);
-//   //   document.AddMember(k, v, alloc);
-//   // }
+  for (auto arg : args_vec)
+  {
+    _json["argv"][arg.key()] = arg.value();
+  }
 
-//   // Key-array pair
 
-//   // Write the log to disk
-
-//  private:
-//   std::string filename;
-//   rapidjson::Document document;
-//   rapidjson::Document::AllocatorType alloc;
-// };
+  std::cout << _json.dump(4) << std::endl;
+}

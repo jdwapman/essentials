@@ -4,6 +4,7 @@
 import subprocess
 import os
 from datetime import datetime
+import time
 
 
 def strip_path(filepath):
@@ -36,31 +37,41 @@ print(RESULTS_FILE)
 
 results = open(RESULTS_FILE, "w")
 
-results.write("File,rows,cols,nnz,cusparse,cub,mgpu,gunrock,tiled\n")
+results.write("File,rows,cols,nnz,pin,cusparse,cub,mgpu,gunrock,tiled\n")
 
 PROFILEDIR = "profiles_" + now.strftime("%Y%m%d_%H:%M:%S")
 os.mkdir(PROFILEDIR)
 
 with open("datasets.txt", "r") as datasets:
     for dataset in datasets:
-        benchmark_cmd = BIN + " --gunrock --cub --mgpu --cusparse --tiled -m " + \
-            dataset.rstrip() + " | tail -n 1 > temp_spmvbenchmark.txt"
+        for pin in [0, 1]:
 
-        print("Running command " + benchmark_cmd)
-        retval = subprocess.run(benchmark_cmd, shell=True, capture_output=True)
-        print(retval)
+            benchmark_cmd = BIN + " --cusparse --cub --mgpu --gunrock --tiled -m " + \
+                dataset.rstrip()
 
-        if "Exited with exit code 1" in str(retval.stderr) or "File is not a sparse matrix" in str(retval.stderr):
-            print("Error: " + dataset)
-            continue
-        else:
-            print("Got return code 0 for " + dataset)
+            if pin:
+                benchmark_cmd += " -p"
 
-            # Print the program output
-            print(retval.stdout.decode("utf-8"))
 
-            subprocess.run("cat temp_spmvbenchmark.txt >> " +
-                           RESULTS_FILE, shell=True)
+            benchmark_cmd += " | tail -n 1 > temp_spmvbenchmark.txt"
+
+            print("Running command " + benchmark_cmd)
+            retval = subprocess.run(benchmark_cmd, shell=True, capture_output=True)
+            # Sleep 0.5 sec
+            time.sleep(0.5)
+            print(retval)
+
+            if "Exited with exit code 1" in str(retval.stderr) or "File is not a sparse matrix" in str(retval.stderr):
+                print("Error: " + dataset)
+                continue
+            else:
+                print("Got return code 0 for " + dataset)
+
+                # Print the program output
+                print(retval.stdout.decode("utf-8"))
+
+                subprocess.run("cat temp_spmvbenchmark.txt >> " +
+                            RESULTS_FILE, shell=True)
 
 os.remove("temp_spmvbenchmark.txt")
 

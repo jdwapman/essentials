@@ -4,6 +4,11 @@
 #include <cuda_runtime_api.h>
 #include <tuple>
 
+#include <nlohmann/json.hpp>
+
+// for convenience
+using json = nlohmann::json;
+
 namespace cg = cooperative_groups;
 
 #define CHECK_CUDA(func)                                                  \
@@ -161,30 +166,50 @@ __host__ __device__ __forceinline__ constexpr IdentityT TupleReduction(
   return identity;
 }
 
-void print_gpu_stats() {
-  int device = 0;
+void print_gpu_stats(json &_results) {
+  // Get the current CUDA device
+  int device;
+  cudaGetDevice(&device);
+
+  _results["gpustats"]["device"] = device;
+
   cudaDeviceProp deviceProp;
   CHECK_CUDA(cudaGetDeviceProperties(&deviceProp, device))
 
   // Print the type of device
   printf("CUDA Device [%d]: \"%s\"\n", device, deviceProp.name);
 
+  _results["gpustats"]["name"] = deviceProp.name;
+
   // Print the compute capability
   printf("- Compute Capability: %d.%d\n", deviceProp.major, deviceProp.minor);
 
+  _results["gpustats"]["compute_capability"] =
+      std::to_string(deviceProp.major) + "." + std::to_string(deviceProp.minor);
+
   // Print the number of multiprocessors
   printf("- Total number of SMs: %d\n", deviceProp.multiProcessorCount);
+
+  _results["gpustats"]["total_sms"] = deviceProp.multiProcessorCount;
 
   // Print the amount of memory in GB
   printf("- Total amount of global memory: %.0f GB\n",
          deviceProp.totalGlobalMem * 1e-9f);
 
+  _results["gpustats"]["total_global_memory"] =
+      deviceProp.totalGlobalMem;
+
   // Print the amount of L2 cache
   printf("- L2 cache size: %.0f KB\n", deviceProp.l2CacheSize * 1e-3f);
+
+  _results["gpustats"]["l2_cache_size"] = deviceProp.l2CacheSize;
 
   // Print the amount of persisting L2 cache
   printf("- Persisting L2 cache size: %.0f KB\n",
          deviceProp.persistingL2CacheMaxSize * 1e-3f);
+
+  _results["gpustats"]["persisting_l2_cache_size"] =
+      deviceProp.persistingL2CacheMaxSize;
 
   // Print the max policy window size
   printf("- Access policy max window size: %.0f KB\n",
@@ -192,19 +217,33 @@ void print_gpu_stats() {
   printf("  - %d float32s\n", deviceProp.accessPolicyMaxWindowSize / 4);
   printf("  - %d float64s\n", deviceProp.accessPolicyMaxWindowSize / 8);
 
+  _results["gpustats"]["access_policy_max_window_size"] =
+      deviceProp.accessPolicyMaxWindowSize;
+
   // Print the amount of shared memory available per block
   printf("- Shared memory available per block (default): %.0f KB\n",
          deviceProp.sharedMemPerBlock * 1e-3f);
+
+  _results["gpustats"]["shared_memory_per_block"] =
+      deviceProp.sharedMemPerBlock;
+
   printf("- Shared memory available per block (extended): %.0f KB\n",
          deviceProp.sharedMemPerBlockOptin * 1e-3f);
+
+  _results["gpustats"]["shared_memory_per_block_extended"] =
+      deviceProp.sharedMemPerBlockOptin;
 
   // Print the max number of threads per SM and block
   printf("- Max threads per SM: %d\n", deviceProp.maxThreadsPerMultiProcessor);
   printf("- Max threads per block: %d\n", deviceProp.maxThreadsPerBlock);
+
+  _results["gpustats"]["max_threads_per_sm"] =
+      deviceProp.maxThreadsPerMultiProcessor;
+  _results["gpustats"]["max_threads_per_block"] = deviceProp.maxThreadsPerBlock;
 }
 
 template <typename vector_t>
-cudaStream_t setup_ampere_cache(vector_t data) {
+cudaStream_t setup_ampere_cache(vector_t data, json &_results) {
   // The hitRatio parameter can be used to specify the fraction of accesses that
   // receive the hitProp property. In both of the examples above, 60% of the
   // memory accesses in the global memory region [ptr..ptr+num_bytes) have the
@@ -257,6 +296,12 @@ cudaStream_t setup_ampere_cache(vector_t data) {
     CHECK_CUDA(cudaStreamSetAttribute(
         stream, cudaStreamAttributeAccessPolicyWindow,
         &stream_attribute));  // Set the attributes to a CUDA Stream
+
+    
+    _results["ampere"]["persisting_access_ratio"] = 1.0;
+    _results["ampere"]["streaming_access_ratio"] = 0.0;
+    _results["ampere"]["persisting_access_size(bytes)"] = window_size;
+    _results["ampere"]["data_size(bytes)"] = data_size_bytes;
   } else {
     // Using Volta or below
     printf(
@@ -280,9 +325,8 @@ void reset_ampere_cache(stream_t stream) {
   stream_attribute.accessPolicyWindow.num_bytes = 0;
 
   // Overwrite the access policy attribute to a CUDA Stream
-  CHECK_CUDA(cudaStreamSetAttribute(stream,
-  cudaStreamAttributeAccessPolicyWindow,
-                         &stream_attribute));
+  CHECK_CUDA(cudaStreamSetAttribute(
+      stream, cudaStreamAttributeAccessPolicyWindow, &stream_attribute));
 
   // Remove any persistent lines in L2
   CHECK_CUDA(cudaCtxResetPersistingL2Cache());
