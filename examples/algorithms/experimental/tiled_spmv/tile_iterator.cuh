@@ -26,7 +26,7 @@ template <typename row_t, typename col_t>
 struct Point {
   row_t row;
   col_t col;
-  __device__ __forceinline__ Point(row_t _row, col_t _col)
+  __host__ __device__ __forceinline__ Point(row_t _row, col_t _col)
       : row(_row), col(_col) {}
 };
 
@@ -100,33 +100,33 @@ class Layout {
   // ===== TILE INFO FUNCTIONS ===== //
 
   // Get the dimensions of a tile
-  __device__ __forceinline__ constexpr auto rows_in_tile(
+  __host__ __device__ __forceinline__ constexpr auto rows_in_tile(
       const int hierarchy) const {
     auto tiledim = TupleReturnValue(hierarchy, tiledims);
     return std::get<0>(tiledim);
   }
 
-  __device__ __forceinline__ constexpr auto cols_in_tile(
+  __host__ __device__ __forceinline__ constexpr auto cols_in_tile(
       const int hierarchy) const {
     auto tiledim = TupleReturnValue(hierarchy, tiledims);
     return std::get<1>(tiledim);
   }
 
   template <typename tile_index_t>
-  __device__ __forceinline__ constexpr auto rows_in_tile(
+  __host__ __device__ __forceinline__ constexpr auto rows_in_tile(
       const tile_index_t tile_index) const {
     return rows_in_tile(tile_index.getHierarchy());
   }
 
   template <typename tile_index_t>
-  __device__ __forceinline__ constexpr auto cols_in_tile(
+  __host__ __device__ __forceinline__ constexpr auto cols_in_tile(
       const tile_index_t tile_index) const {
     return cols_in_tile(tile_index.getHierarchy());
   }
 
   // Get the number of child tiles
   // TODO need to handle the remainders
-  __device__ __forceinline__ constexpr auto num_child_row_tiles(
+  __host__ __device__ __forceinline__ constexpr auto num_child_row_tiles(
       const int& hierarchy) const {
     if (hierarchy == get_hierarchy_level()) {
       return 1;
@@ -142,7 +142,7 @@ class Layout {
     }
   }
 
-  __device__ __forceinline__ constexpr auto num_child_col_tiles(
+  __host__ __device__ __forceinline__ constexpr auto num_child_col_tiles(
       const int hierarchy) const {
     if (hierarchy == get_hierarchy_level()) {
       return 1;
@@ -159,19 +159,19 @@ class Layout {
   }
 
   template <typename tile_index_t>
-  __device__ __forceinline__ auto num_child_row_tiles(
+  __host__ __device__ __forceinline__ auto num_child_row_tiles(
       const tile_index_t& tile_index) const {
     return num_child_row_tiles(tile_index.getHierarchy());
   }
 
   template <typename tile_index_t>
-  __device__ __forceinline__ auto num_child_col_tiles(
+  __host__ __device__ __forceinline__ auto num_child_col_tiles(
       const tile_index_t& tile_index) const {
     return num_child_col_tiles(tile_index.getHierarchy());
   }
 
   // Get the number of tiles at the level of the given tile
-  __device__ __forceinline__ constexpr auto num_row_tiles_at_level(
+  __host__ __device__ __forceinline__ constexpr auto num_row_tiles_at_level(
       const int& hierarchy) const {
     if (hierarchy == 0) {
       return 1;
@@ -180,7 +180,7 @@ class Layout {
     return num_child_row_tiles(hierarchy - 1);
   }
 
-  __device__ __forceinline__ constexpr auto num_col_tiles_at_level(
+  __host__ __device__ __forceinline__ constexpr auto num_col_tiles_at_level(
       const int& hierarchy) const {
     if (hierarchy == 0) {
       return 1;
@@ -190,22 +190,23 @@ class Layout {
   }
 
   template <typename tile_index_t>
-  __device__ __forceinline__ constexpr auto num_row_tiles_at_level(
+  __host__ __device__ __forceinline__ constexpr auto num_row_tiles_at_level(
       const tile_index_t& tile_index) const {
     return num_row_tiles_at_level(tile_index.getHierarchy());
   }
 
   template <typename tile_index_t>
-  __device__ __forceinline__ constexpr auto num_col_tiles_at_level(
+  __host__ __device__ __forceinline__ constexpr auto num_col_tiles_at_level(
       const tile_index_t& tile_index) const {
     return num_col_tiles_at_level(tile_index.getHierarchy());
   }
 
   // Not constexpr since the point changes at runtime
   template <typename point_t, typename tile_index_t, typename hierarchy_t>
-  __device__ __forceinline__ auto remap_point(point_t point,
-                                              tile_index_t tile_index,
-                                              hierarchy_t goal_hierarchy) {
+  __host__ __device__ __forceinline__ auto remap_point(
+      point_t point,
+      tile_index_t tile_index,
+      hierarchy_t goal_hierarchy) {
     if (tile_index.getHierarchy() < goal_hierarchy) {
       auto new_point = point;
 

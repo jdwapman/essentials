@@ -11,6 +11,17 @@ namespace cg = cooperative_groups;
 using namespace gunrock;
 using namespace memory;
 
+struct tiledims {
+  int matrix_tile_rows;
+  int matrix_tile_cols;
+  int spatial_tile_rows;
+  int spatial_tile_cols;
+  int temporal_tile_rows;
+  int temporal_tile_cols;
+  int block_tile_rows;
+  int block_tile_cols;
+};
+
 // The parent class for all tiled iteration
 
 template <typename graph_t, typename vector_t>
@@ -18,6 +29,7 @@ __global__ void __launch_bounds__(1024, 3)
     spmv_tiled_kernel(graph_t graph,
                       vector_t* input,
                       vector_t* output,
+                      tiledims* dims,  // Used to extract for reporting
                       int tile_row_size,
                       int tile_col_size,
                       size_t shmem_size) {
@@ -52,6 +64,15 @@ __global__ void __launch_bounds__(1024, 3)
   auto block_temporal_layout =
       temporal_layout.tile(min(tile_row_size, graph.get_number_of_rows()),
                            graph.get_number_of_columns());
+
+  dims->matrix_tile_rows = matrix_layout.rows_in_tile(0);
+  dims->matrix_tile_cols = matrix_layout.cols_in_tile(0);
+  dims->spatial_tile_rows = spatial_layout.rows_in_tile(1);
+  dims->spatial_tile_cols = spatial_layout.cols_in_tile(1);
+  dims->temporal_tile_rows = temporal_layout.rows_in_tile(2);
+  dims->temporal_tile_cols = temporal_layout.cols_in_tile(2);
+  dims->block_tile_rows = block_temporal_layout.rows_in_tile(3);
+  dims->block_tile_cols = block_temporal_layout.cols_in_tile(3);
 
   //   if (threadIdx.x == 0 && blockIdx.x == 0) {
   //     printf("(%d,%d), (%d,%d), (%d,%d), (%d,%d)\n",
@@ -101,7 +122,8 @@ double spmv_tiled(cudaStream_t stream,
                   csr_t& csr,
                   vector_t& input,
                   vector_t& output,
-                  args_t pargs) {
+                  args_t pargs,
+                  json& _results) {
   // --
   // Build graph
 
@@ -134,7 +156,7 @@ double spmv_tiled(cudaStream_t stream,
   // shmem
   auto target_occupancy = 3;
   numThreadsPerBlock = deviceProp.maxThreadsPerBlock / target_occupancy;
-  shmemPerBlock = deviceProp.sharedMemPerBlockOptin / (target_occupancy+1);
+  shmemPerBlock = deviceProp.sharedMemPerBlockOptin / (target_occupancy + 1);
 
   numThreadsPerBlock = 1024;
 
@@ -164,10 +186,17 @@ double spmv_tiled(cudaStream_t stream,
 
   std::cout << "Max Active Blocks Per SM: " << numBlocksPerSm << std::endl;
 
+  _results["tiled_spmv"]["registers"] = attr.numRegs;
+  _results["tiled_spmv"]["threads_per_block"] = numThreadsPerBlock;
+  _results["tiled_spmv"]["shmem_per_block"] = shmemPerBlock;
+  _results["tiled_spmv"]["max_active_blocks_per_sm"] = numBlocksPerSm;
+
   assert(numBlocksPerSm > 0);
 
   dim3 dimBlock(numThreadsPerBlock, 1, 1);
   dim3 dimGrid(deviceProp.multiProcessorCount * numBlocksPerSm, 1, 1);
+
+  _results["tiled_spmv"]["blocks"] = dimGrid.x;
 
   /* ========== SETUP TILE SIZE ========== */
   // TODO need to set this up so I actually do cache pinning. I think this is
@@ -203,9 +232,13 @@ double spmv_tiled(cudaStream_t stream,
   void* input_ptr = thrust::raw_pointer_cast(input.data());
   void* output_ptr = thrust::raw_pointer_cast(output.data());
 
+  thrust::device_vector<tiledims> tiledims_vec(1);
+  void* tiledims_ptr = thrust::raw_pointer_cast(tiledims_vec.data());
+
   void* kernelArgs[] = {&G,
                         &input_ptr,
                         &output_ptr,
+                        &tiledims_ptr,
                         &rows_per_block,
                         &cols_per_block,
                         &shmemPerBlock};
@@ -223,6 +256,27 @@ double spmv_tiled(cudaStream_t stream,
 
   CHECK_CUDA(cudaDeviceSynchronize());
   timer.end();
+
+  thrust::host_vector<tiledims> tiledims_vec_host(1);
+  tiledims_vec_host = tiledims_vec;
+
+  // Save the tile size results
+  _results["tiled_spmv"]["tile_size"]["matrix_tile_rows"] =
+      tiledims_vec_host[0].matrix_tile_rows;
+  _results["tiled_spmv"]["tile_size"]["matrix_tile_cols"] =
+      tiledims_vec_host[0].matrix_tile_cols;
+  _results["tiled_spmv"]["tile_size"]["spatial_tile_rows"] =
+      tiledims_vec_host[0].spatial_tile_rows;
+  _results["tiled_spmv"]["tile_size"]["spatial_tile_cols"] =
+      tiledims_vec_host[0].spatial_tile_cols;
+  _results["tiled_spmv"]["tile_size"]["temporal_tile_rows"] =
+      tiledims_vec_host[0].temporal_tile_rows;
+  _results["tiled_spmv"]["tile_size"]["temporal_tile_cols"] =
+      tiledims_vec_host[0].temporal_tile_cols;
+  _results["tiled_spmv"]["tile_size"]["block_tile_rows"] =
+      tiledims_vec_host[0].block_tile_rows;
+  _results["tiled_spmv"]["tile_size"]["block_tile_cols"] =
+      tiledims_vec_host[0].block_tile_cols;
 
   return timer.milliseconds();
 }

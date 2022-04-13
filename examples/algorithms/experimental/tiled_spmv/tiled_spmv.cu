@@ -16,7 +16,6 @@
 #include <nlohmann/json.hpp>
 #include <typeinfo>
 #include <unistd.h>
-#include <gunrock/util/info.hxx>
 
 // for convenience
 using json = nlohmann::json;
@@ -85,7 +84,7 @@ double test_spmv(SPMV_t spmv_impl,
         spmv_cusparse(stream, sparse_matrix, d_input, d_output, pargs);
   } else if (spmv_impl == TILED) {
     printf("=== RUNNING TILED SPMV ===\n");
-    elapsed_time = spmv_tiled(stream, sparse_matrix, d_input, d_output, pargs);
+    elapsed_time = spmv_tiled(stream, sparse_matrix, d_input, d_output, pargs, _results);
   } else if (spmv_impl == GUNROCK) {
     printf("=== RUNNING GUNROCK SPMV ===\n");
     auto G = gunrock::graph::build::from_csr<gunrock::memory_space_t::device,
@@ -159,6 +158,8 @@ void test_spmv(int num_arguments, char** argument_array) {
        cxxopts::value<std::string>())  // CSR
       ("m,market", "Matrix-market format file",
        cxxopts::value<std::string>())  // Market
+      ("j,jsondir", "json output directory",
+       cxxopts::value<std::string>()->default_value("results.json"))  // JSON
       ("c,cpu", "Run a CPU comparison",
        cxxopts::value<bool>()->default_value("false"))  // CPU
       ("cub", "Run CUB SPMV",
