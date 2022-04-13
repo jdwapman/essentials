@@ -235,6 +235,9 @@ double spmv_tiled(cudaStream_t stream,
   thrust::device_vector<tiledims> tiledims_vec(1);
   void* tiledims_ptr = thrust::raw_pointer_cast(tiledims_vec.data());
 
+  _results["tiled_spmv"]["max_rows_per_block"] = rows_per_block;
+    _results["tiled_spmv"]["max_cols_per_block"] = cols_per_block;
+
   void* kernelArgs[] = {&G,
                         &input_ptr,
                         &output_ptr,
