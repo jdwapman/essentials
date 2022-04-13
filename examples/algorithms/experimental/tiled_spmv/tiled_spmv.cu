@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 #include <typeinfo>
 #include <unistd.h>
+#include <fstream>
 
 // for convenience
 using json = nlohmann::json;
@@ -84,7 +85,8 @@ double test_spmv(SPMV_t spmv_impl,
         spmv_cusparse(stream, sparse_matrix, d_input, d_output, pargs);
   } else if (spmv_impl == TILED) {
     printf("=== RUNNING TILED SPMV ===\n");
-    elapsed_time = spmv_tiled(stream, sparse_matrix, d_input, d_output, pargs, _results);
+    elapsed_time =
+        spmv_tiled(stream, sparse_matrix, d_input, d_output, pargs, _results);
   } else if (spmv_impl == GUNROCK) {
     printf("=== RUNNING GUNROCK SPMV ===\n");
     auto G = gunrock::graph::build::from_csr<gunrock::memory_space_t::device,
@@ -158,7 +160,7 @@ void test_spmv(int num_arguments, char** argument_array) {
        cxxopts::value<std::string>())  // CSR
       ("m,market", "Matrix-market format file",
        cxxopts::value<std::string>())  // Market
-      ("j,jsondir", "json output directory",
+      ("j,jsonfile", "json output filename. Can also be stdout",
        cxxopts::value<std::string>()->default_value("results.json"))  // JSON
       ("c,cpu", "Run a CPU comparison",
        cxxopts::value<bool>()->default_value("false"))  // CPU
@@ -188,11 +190,17 @@ void test_spmv(int num_arguments, char** argument_array) {
 
   log_cmd_args(results, args);
 
-  // Save the current date and time to the json
+  // Save the current date and time to the json. But strip the newline
   time_t now = time(0);
   char* dt = ctime(&now);
+  // Strip the newline from dt
+  dt[strlen(dt) - 1] = '\0';
   results["time_local"] = dt;
-  results["time_utc"] = asctime(gmtime(&now));
+
+  // Strip the newline from utc_time
+  auto utc_time = asctime(gmtime(&now));
+  utc_time[strlen(utc_time) - 1] = '\0';
+  results["time_utc"] = utc_time;
 
   // Save the hostname
   char hostname[1024];
@@ -334,12 +342,28 @@ void test_spmv(int num_arguments, char** argument_array) {
   results["runtime"]["gunrock"] = elapsed_gunrock;
   results["runtime"]["tiled"] = elapsed_tiled;
 
-  std::cout << results.dump(4) << std::endl;
-
   printf("%s,%d,%d,%d,%d,%f,%f,%f,%f,%f\n", filename.c_str(),
          csr.number_of_rows, csr.number_of_columns, csr.number_of_nonzeros,
          args["pin"].as<bool>(), elapsed_cusparse, elapsed_cub, elapsed_mgpu,
          elapsed_gunrock, elapsed_tiled);
+
+
+  // Log a success
+  results["success"] = true;
+
+  // Save the JSON file
+  auto json_filename = args["jsonfile"].as<std::string>();
+
+  if(json_filename == "stdout")
+  {
+    std::cout << results.dump(4) << std::endl;
+  }
+  else
+  {
+    std::ofstream json_file(json_filename);
+    json_file << results.dump(4);
+    json_file.close();
+  }
 }
 
 int main(int argc, char** argv) {
