@@ -32,13 +32,6 @@ subprocess.run(find_dataset_command, shell=True)
 
 now = datetime.now()
 
-RESULTS_FILE = "results_" + now.strftime("%Y%m%d_%H:%M:%S") + ".csv"
-print(RESULTS_FILE)
-
-results = open(RESULTS_FILE, "w")
-
-results.write("File,rows,cols,nnz,pin,cusparse,cub,mgpu,gunrock,tiled\n")
-
 PROFILEDIR = "profiles_" + now.strftime("%Y%m%d_%H:%M:%S")
 os.mkdir(PROFILEDIR)
 
@@ -52,27 +45,19 @@ with open("datasets.txt", "r") as datasets:
             if pin:
                 benchmark_cmd += " -p"
 
+            # Add the json ouput in PROFILEDIR/dataset_name.json
+            benchmark_cmd += " -j " + PROFILEDIR + "/" + \
+                strip_path(dataset.rstrip()) 
 
-            benchmark_cmd += " | tail -n 1 > temp_spmvbenchmark.txt"
+            if pin:
+                benchmark_cmd += "_pinned"
+                
+            benchmark_cmd += ".json"
 
-            print("Running command " + benchmark_cmd)
+            print(benchmark_cmd)
+
             retval = subprocess.run(benchmark_cmd, shell=True, capture_output=True)
             # Sleep 0.5 sec
             time.sleep(0.5)
-            print(retval)
-
-            if "Exited with exit code 1" in str(retval.stderr) or "File is not a sparse matrix" in str(retval.stderr):
-                print("Error: " + dataset)
-                continue
-            else:
-                print("Got return code 0 for " + dataset)
-
-                # Print the program output
-                print(retval.stdout.decode("utf-8"))
-
-                subprocess.run("cat temp_spmvbenchmark.txt >> " +
-                            RESULTS_FILE, shell=True)
-
-os.remove("temp_spmvbenchmark.txt")
 
 print("All Tests Completed")
