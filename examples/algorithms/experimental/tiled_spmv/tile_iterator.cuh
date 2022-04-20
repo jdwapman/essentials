@@ -662,8 +662,8 @@ class TileIterator {
       // We aren't iterating over the tile anymore, we're now processing it
       // and diving into parallel work
       // process_tile_thread_per_row(parent_tile_idx);
-      process_tile_warp_per_row(parent_tile_idx);
-      // process_tile_warp_per_row_queue(parent_tile_idx);
+      // process_tile_warp_per_row(parent_tile_idx);
+      process_tile_warp_per_row_queue(parent_tile_idx);
 
       // Get the current grid and sync
       auto grid = cg::this_grid();
