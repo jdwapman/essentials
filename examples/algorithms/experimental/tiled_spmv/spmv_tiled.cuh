@@ -154,7 +154,7 @@ double spmv_tiled(cudaStream_t stream,
 
   // Use the max number of threads per block to maximize parallelism over
   // shmem
-  auto target_occupancy = 2;
+  auto target_occupancy = 3;
 
   _results["tiled_spmv"]["target_occupancy"] = target_occupancy;
 

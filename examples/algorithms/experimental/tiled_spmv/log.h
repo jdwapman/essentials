@@ -15,7 +15,4 @@ void log_cmd_args(json &_json, args_t args)
   {
     _json["argv"][arg.key()] = arg.value();
   }
-
-
-  std::cout << _json.dump(4) << std::endl;
 }
