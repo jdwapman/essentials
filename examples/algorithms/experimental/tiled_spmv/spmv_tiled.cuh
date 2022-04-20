@@ -154,11 +154,14 @@ double spmv_tiled(cudaStream_t stream,
 
   // Use the max number of threads per block to maximize parallelism over
   // shmem
-  auto target_occupancy = 3;
-  numThreadsPerBlock = deviceProp.maxThreadsPerBlock / target_occupancy;
-  shmemPerBlock = deviceProp.sharedMemPerBlockOptin / (target_occupancy + 1);
+  auto target_occupancy = 2;
 
-  numThreadsPerBlock = 1024;
+  _results["tiled_spmv"]["target_occupancy"] = target_occupancy;
+
+  numThreadsPerBlock = deviceProp.maxThreadsPerBlock / target_occupancy;
+  shmemPerBlock =
+      (deviceProp.sharedMemPerBlockOptin - target_occupancy * 1024) /
+      target_occupancy;
 
   auto bytes_per_row = 2 * sizeof(row_t) + sizeof(nonzero_t);
   auto rows_per_block = (shmemPerBlock / bytes_per_row) - 1;
@@ -169,7 +172,12 @@ double spmv_tiled(cudaStream_t stream,
 
   CHECK_CUDA(cudaFuncSetAttribute(spmv_tiled_kernel<decltype(G), float>,
                                   cudaFuncAttributeMaxDynamicSharedMemorySize,
-                                  shmemPerBlock));
+                                  deviceProp.sharedMemPerBlockOptin));
+
+  //   int carveout = 100;
+  //   CHECK_CUDA(cudaFuncSetAttribute(
+  //       spmv_tiled_kernel<decltype(G), float>,
+  //       cudaFuncAttributePreferredSharedMemoryCarveout, carveout));
 
   // Need to know the max occupancy to determine how many blocks to launch
   // for the cooperative kernel. All blocks must be resident on SMs
@@ -190,8 +198,9 @@ double spmv_tiled(cudaStream_t stream,
   _results["tiled_spmv"]["threads_per_block"] = numThreadsPerBlock;
   _results["tiled_spmv"]["shmem_per_block"] = shmemPerBlock;
   _results["tiled_spmv"]["max_active_blocks_per_sm"] = numBlocksPerSm;
+  _results["tiled_spmv"]["actual_shmem_per_block"] = attr.sharedSizeBytes;
 
-  assert(numBlocksPerSm > 0);
+  assert(numBlocksPerSm == target_occupancy);
 
   dim3 dimBlock(numThreadsPerBlock, 1, 1);
   dim3 dimGrid(deviceProp.multiProcessorCount * numBlocksPerSm, 1, 1);
@@ -236,7 +245,7 @@ double spmv_tiled(cudaStream_t stream,
   void* tiledims_ptr = thrust::raw_pointer_cast(tiledims_vec.data());
 
   _results["tiled_spmv"]["max_rows_per_block"] = rows_per_block;
-    _results["tiled_spmv"]["max_cols_per_block"] = cols_per_block;
+  _results["tiled_spmv"]["max_cols_per_block"] = cols_per_block;
 
   void* kernelArgs[] = {&G,
                         &input_ptr,

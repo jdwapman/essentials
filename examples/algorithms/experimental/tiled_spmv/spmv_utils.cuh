@@ -166,7 +166,7 @@ __host__ __device__ __forceinline__ constexpr IdentityT TupleReduction(
   return identity;
 }
 
-void print_gpu_stats(json &_results) {
+void print_gpu_stats(json& _results) {
   // Get the current CUDA device
   int device;
   cudaGetDevice(&device);
@@ -196,8 +196,7 @@ void print_gpu_stats(json &_results) {
   printf("- Total amount of global memory: %.0f GB\n",
          deviceProp.totalGlobalMem * 1e-9f);
 
-  _results["gpustats"]["total_global_memory"] =
-      deviceProp.totalGlobalMem;
+  _results["gpustats"]["total_global_memory"] = deviceProp.totalGlobalMem;
 
   // Print the amount of L2 cache
   printf("- L2 cache size: %.0f KB\n", deviceProp.l2CacheSize * 1e-3f);
@@ -233,6 +232,9 @@ void print_gpu_stats(json &_results) {
   _results["gpustats"]["shared_memory_per_block_extended"] =
       deviceProp.sharedMemPerBlockOptin;
 
+  _results["gpustats"]["shared_memory_per_multiprocessor"] =
+      deviceProp.sharedMemPerMultiprocessor;
+
   // Print the max number of threads per SM and block
   printf("- Max threads per SM: %d\n", deviceProp.maxThreadsPerMultiProcessor);
   printf("- Max threads per block: %d\n", deviceProp.maxThreadsPerBlock);
@@ -243,7 +245,7 @@ void print_gpu_stats(json &_results) {
 }
 
 template <typename vector_t>
-cudaStream_t setup_ampere_cache(vector_t data, json &_results) {
+cudaStream_t setup_ampere_cache(vector_t data, json& _results) {
   // The hitRatio parameter can be used to specify the fraction of accesses that
   // receive the hitProp property. In both of the examples above, 60% of the
   // memory accesses in the global memory region [ptr..ptr+num_bytes) have the
@@ -297,7 +299,6 @@ cudaStream_t setup_ampere_cache(vector_t data, json &_results) {
         stream, cudaStreamAttributeAccessPolicyWindow,
         &stream_attribute));  // Set the attributes to a CUDA Stream
 
-    
     _results["ampere"]["persisting_access_ratio"] = 1.0;
     _results["ampere"]["streaming_access_ratio"] = 0.0;
     _results["ampere"]["persisting_access_size(bytes)"] = window_size;
@@ -330,4 +331,88 @@ void reset_ampere_cache(stream_t stream) {
 
   // Remove any persistent lines in L2
   CHECK_CUDA(cudaCtxResetPersistingL2Cache());
+}
+
+template <typename kernel_t>
+int occupancy_shmem_bst(int min, int max, kernel_t kernel, int occupancy) {
+  // Min is the minimum amount of shmem
+  // Max is the maximum amount of shmem
+  // Occupancy is the target occupancy
+
+  int mid = (min + max) / 2;
+
+  // Do a binary search
+  if (min == max) {
+    return min;
+  }
+
+  int occupancy_mid = 0;
+  int occupancy_min = 0;
+  int occupancy_max = 0;
+
+  // Get occupancy for mid
+  CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occupancy_mid,
+                                                           kernel, 1, mid));
+
+  // Get occupancy for min
+  CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occupancy_min,
+                                                           kernel, 1, min));
+
+  // Get occupancy for max
+  CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occupancy_max,
+                                                           kernel, 1, max));
+
+  if (occupancy_mid == occupancy) {
+    return mid;
+    // If the occupancy is too low, use a smaller amount of shmem
+  } else if (occupancy_mid < occupancy) {
+    return occupancy_shmem_bst(min, mid, kernel, occupancy);
+  } else {
+    // If the occupancy is too high, use more shmem
+    return occupancy_shmem_bst(mid, max, kernel, occupancy);
+  }
+}
+
+template <typename kernel_t>
+int occupancy_threads_bst(int min,
+                          int max,
+                          int shmem,
+                          kernel_t kernel,
+                          int occupancy) {
+  // Min is the minimum amount of threads
+  // Max is the maximum amount of threads
+  // Occupancy is the target occupancy
+
+  int mid = (min + max) / 2;
+
+  // Do a binary search
+  if (min == max) {
+    return min;
+  }
+
+  int occupancy_mid = 0;
+  int occupancy_min = 0;
+  int occupancy_max = 0;
+
+  // Get occupancy for mid
+  CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occupancy_mid,
+                                                           kernel, mid, shmem));
+
+  // Get occupancy for min
+  CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occupancy_min,
+                                                           kernel, min, shmem));
+
+  // Get occupancy for max
+  CHECK_CUDA(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&occupancy_max,
+                                                           kernel, max, shmem));
+
+  if (occupancy_mid == occupancy) {
+    return mid;
+    // If the occupancy is too low, use a smaller amount of shmem
+  } else if (occupancy_mid < occupancy) {
+    return occupancy_threads_bst(min, mid, shmem, kernel, occupancy);
+  } else {
+    // If the occupancy is too high, use more shmem
+    return occupancy_threads_bst(mid, max, shmem, kernel, occupancy);
+  }
 }

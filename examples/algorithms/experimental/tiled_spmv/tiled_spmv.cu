@@ -255,12 +255,6 @@ void test_spmv(int num_arguments, char** argument_array) {
   using row_t = int;
   using edge_t = int;
   using nonzero_t = float;
-
-  // Log the types
-  // results["matrix"]["row_t"] = type_name<row_t>();
-  // results["matrix"]["edge_t"] = type_name<edge_t>();
-  // results["matrix"]["nonzero_t"] = type_name<nonzero_t>();
-
   using csr_t = format::csr_t<memory_space_t::device, row_t, edge_t, nonzero_t>;
 
   // --
