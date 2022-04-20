@@ -346,14 +346,6 @@ class TileIterator {
          row_idx < rows_in_block &&
          matrix_coord.row + row_idx < graph.get_number_of_rows();
          row_idx += blockDim.x) {
-      // Copy the row offset to shared memory. Load streaming since we
-      // won't
-      // // reuse this
-      // this->shmem_row_offsets_start[row_idx] =
-      //     __ldcs(&(this->graph.get_row_offsets()[matrix_coord.row +
-      //     row_idx]));
-      // this->shmem_row_offsets_end[row_idx] = __ldcs(
-      //     &(this->graph.get_row_offsets()[matrix_coord.row + row_idx + 1]));
       this->shmem_output[row_idx] = 0;
     }
 

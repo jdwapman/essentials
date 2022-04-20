@@ -37,8 +37,6 @@ __global__ void __launch_bounds__(1024, 3)
   using row_t = typename graph_t::vertex_type;
   extern __shared__ row_t shmem[];
 
-  print_device("New tile row size: %d\n", (int)tile_row_size);
-
   // Just the matrix dimensions
   auto matrix_layout =
       make_layout(graph.get_number_of_rows(), graph.get_number_of_columns());
