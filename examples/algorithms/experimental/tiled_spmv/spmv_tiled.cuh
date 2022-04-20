@@ -158,7 +158,9 @@ double spmv_tiled(cudaStream_t stream,
 
   _results["tiled_spmv"]["target_occupancy"] = target_occupancy;
 
-  numThreadsPerBlock = deviceProp.maxThreadsPerBlock / target_occupancy;
+  numThreadsPerBlock =
+      min(deviceProp.maxThreadsPerBlock,
+          deviceProp.maxThreadsPerMultiProcessor / target_occupancy);
   shmemPerBlock =
       (deviceProp.sharedMemPerBlockOptin - target_occupancy * 1024) /
       target_occupancy;
@@ -198,7 +200,6 @@ double spmv_tiled(cudaStream_t stream,
   _results["tiled_spmv"]["threads_per_block"] = numThreadsPerBlock;
   _results["tiled_spmv"]["shmem_per_block"] = shmemPerBlock;
   _results["tiled_spmv"]["max_active_blocks_per_sm"] = numBlocksPerSm;
-  _results["tiled_spmv"]["actual_shmem_per_block"] = attr.sharedSizeBytes;
 
   assert(numBlocksPerSm == target_occupancy);
 
