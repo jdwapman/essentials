@@ -23,8 +23,22 @@ parser.add_argument('--upper_bound', type=int, nargs='?',
                     default=1, help='upper bound')
 parser.add_argument('--data_type', type=str, nargs='?', default='float',
                     help='data type. Options: float, double, float32, float64, int, int32, int64')
+parser.add_argument('--sparse', type=int, help='percent sparsity (0-100)')
+parser.add_argument('--tile_rows', type=int, help='tile rows')
+parser.add_argument('--tile_cols', type=int, help='tile cols')
 
 args = parser.parse_args()
+
+# Exit if the number of rows or columns is not specified
+if args.rows is None or args.cols is None:
+    print("Please specify the number of rows and columns")
+    sys.exit(1)
+
+if args.sparse is not None:
+    sparse = args.sparse
+    if sparse < 0 or sparse > 100:
+        print("Please specify a valid percent sparsity (0-100)")
+        sys.exit(1)
 
 # Create the random matrix using the provided dimensions and data type.
 mat = np.random.rand(args.rows, args.cols)
@@ -51,6 +65,10 @@ else:
     print("ERROR: Unsupported data type:", args.data_type)
     sys.exit(1)
 
+# Sparsify
+# Iterate over the tiles in the matrix (first assuming that it's an
+# even multiple of the tile size) and set each tile 
+
 sparse_matrix = csr_matrix(mat)
 
 # Write to disk
@@ -62,4 +80,5 @@ with open(args.file, 'w') as f:
     f.write("%d %d %d\n" % (args.rows, args.cols, sparse_matrix.nnz))
     for i in range(sparse_matrix.shape[0]):
         for j in range(sparse_matrix.indptr[i], sparse_matrix.indptr[i+1]):
-            f.write("%d %d %f\n" % (i+1, sparse_matrix.indices[j]+1, sparse_matrix.data[j]))
+            f.write("%d %d %f\n" %
+                    (i+1, sparse_matrix.indices[j]+1, sparse_matrix.data[j]))
