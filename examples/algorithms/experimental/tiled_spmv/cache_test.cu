@@ -60,7 +60,7 @@ __global__ void foo(T* cache_data,
   for (int i = 0; i < thrash_data_size; i++) {
     // auto data_addr = sampler.rand_int(i, 0, 0, thrash_data_size);
     // cache_read(thrash_data, data_addr);
-    // cache_read(thrash_data, i);
+    cache_read(thrash_data, i);
   }
 
   // 3. Read in the cache-pinned values again. These _should_ still be hits
