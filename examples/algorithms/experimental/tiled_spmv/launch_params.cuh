@@ -1,6 +1,6 @@
 #include <gunrock/cuda/launch_box.hxx>
 
-using namespace gunrock::cuda::launch_box;
+using namespace gunrock::gcuda::launch_box;
 
 /* ========== SM_80 ========== */
 

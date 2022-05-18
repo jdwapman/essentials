@@ -98,9 +98,9 @@ double test_spmv(SPMV_t spmv_impl,
         sparse_matrix.nonzero_values.data().get());
 
     // Create the context
-    std::shared_ptr<gunrock::cuda::multi_context_t> context =
-        std::shared_ptr<gunrock::cuda::multi_context_t>(
-            new gunrock::cuda::multi_context_t(0, stream));
+    std::shared_ptr<gunrock::gcuda::multi_context_t> context =
+        std::shared_ptr<gunrock::gcuda::multi_context_t>(
+            new gunrock::gcuda::multi_context_t(0, stream));
     elapsed_time = gunrock::spmv::run(G, d_input.data().get(),
                                       d_output.data().get(), context);
   } else {
@@ -341,19 +341,15 @@ void test_spmv(int num_arguments, char** argument_array) {
          args["pin"].as<bool>(), elapsed_cusparse, elapsed_cub, elapsed_mgpu,
          elapsed_gunrock, elapsed_tiled);
 
-
   // Log a success
   results["success"] = true;
 
   // Save the JSON file
   auto json_filename = args["jsonfile"].as<std::string>();
 
-  if(json_filename == "stdout")
-  {
+  if (json_filename == "stdout") {
     std::cout << results.dump(4) << std::endl;
-  }
-  else
-  {
+  } else {
     std::ofstream json_file(json_filename);
     json_file << results.dump(4);
     json_file.close();
