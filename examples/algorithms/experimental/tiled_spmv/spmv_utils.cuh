@@ -269,6 +269,8 @@ cudaStream_t setup_ampere_cache(vector_t data, json& _results) {
   if (prop.major >= 8) {
     // Using Ampere
 
+    /* Old way of doing this
+
     size_t size = min(int(prop.l2CacheSize), prop.persistingL2CacheMaxSize);
     CHECK_CUDA(
         cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize,
@@ -303,7 +305,12 @@ cudaStream_t setup_ampere_cache(vector_t data, json& _results) {
     _results["ampere"]["streaming_access_ratio"] = 0.0;
     _results["ampere"]["persisting_access_size(bytes)"] = window_size;
     _results["ampere"]["data_size(bytes)"] = data_size_bytes;
-  } else {
+
+    */
+
+    // New way of doing this using annotated pointers
+
+    } else {
     // Using Volta or below
     printf(
         "WARNING: L2 Cache Management available only for compute capabilities "
