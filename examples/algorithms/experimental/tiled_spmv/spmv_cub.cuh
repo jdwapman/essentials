@@ -27,7 +27,7 @@ double spmv_cub(cudaStream_t stream,
 
   // Check if we're pinning the memory
   if (pargs.count("pin")) {
-    printf("Setting up CUB memory pinning");
+    printf("Setting up CUB memory pinning\n");
     cuda::apply_access_property(d_input, (size_t)input.size() * sizeof(float),
                                 cuda::access_property::persisting{});
   }

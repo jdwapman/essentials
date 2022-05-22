@@ -58,14 +58,14 @@ sns.set_theme()
 data = df5
 
 # Get columns 0, 4, 5, and 6 of the "data" DataFrame as a new dataframe
-new_df = data[['nonzeros', 'pin', 'cusparse']]
+new_df = data[['nonzeros', 'pin', 'cub']]
 
 # Get rows where pin is 1
 df_pin = new_df[new_df['pin'] == 1]
 df_no_pin = new_df[new_df['pin'] == 0]
 
-data_pin = df_pin[['cusparse']].to_numpy()
-data_no_pin = df_no_pin[['cusparse']].to_numpy()
+data_pin = df_pin[['cub']].to_numpy()
+data_no_pin = df_no_pin[['cub']].to_numpy()
 
 speedup = data_no_pin / data_pin
 
@@ -75,9 +75,9 @@ geomean = geometric_mean(speedup)
 print("Geomean: {}".format(geomean))
 
 # Plot new_df, which is in the format:
-# nonzeros, pin, cusparse
-# Want to plot cusparse vs nonzeros, with "pin" as the hue
-plot = sns.scatterplot(x="nonzeros", y="cusparse", hue="pin", data=new_df)
+# nonzeros, pin, cub
+# Want to plot cub vs nonzeros, with "pin" as the hue
+plot = sns.scatterplot(x="nonzeros", y="cub", hue="pin", data=new_df)
 
 # Set the x and y axis as log scale
 plot.set(xscale="log", yscale="log")

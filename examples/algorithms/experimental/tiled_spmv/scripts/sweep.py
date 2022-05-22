@@ -39,7 +39,7 @@ with open("datasets.txt", "r") as datasets:
     for dataset in datasets:
         for pin in [0, 1]:
 
-            benchmark_cmd = BIN + " --cusparse --cub --mgpu --gunrock --tiled -m " + \
+            benchmark_cmd = BIN + " --cub -m " + \
                 dataset.rstrip()
 
             if pin:
