@@ -15,7 +15,7 @@ def strip_path(filepath):
 ESSENTIALS_BASE = "~/Research/Gunrock/essentials/"
 
 # Setup Paths for binary and datasets
-BIN = "build_release/bin/tiled_spmv"
+BIN = ESSENTIALS_BASE + "build_release/bin/tiled_spmv"
 DATASET_BASE = "/media/jwapman/SSD1/"  # Must have a "/" at the end
 
 # assert that DATASET_BASE ends with a "/"
