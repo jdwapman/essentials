@@ -28,8 +28,14 @@ double spmv_cub(cudaStream_t stream,
   // Check if we're pinning the memory
   if (pargs.count("pin")) {
     printf("Setting up CUB memory pinning\n");
-    cuda::apply_access_property(d_input, (size_t)input.size() * sizeof(float),
-                                cuda::access_property::persisting{});
+    // cuda::apply_access_property(d_input, (size_t)input.size() * sizeof(float),
+    //                             cuda::access_property::persisting{});
+
+    d_row_offsets = cuda::associate_access_property(d_row_offsets, cuda::access_property::streaming{});
+    d_col_idx = cuda::associate_access_property(d_col_idx, cuda::access_property::streaming{});
+    d_values = cuda::associate_access_property(d_values, cuda::access_property::streaming{});
+    d_input = cuda::associate_access_property(d_input, cuda::access_property::persisting{});
+    d_output = cuda::associate_access_property(d_output, cuda::access_property::streaming{});
   }
 
   // Annotated pointer
