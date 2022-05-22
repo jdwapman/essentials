@@ -12,8 +12,10 @@ def strip_path(filepath):
     return os.path.splitext(base)[0]
 
 
+ESSENTIALS_BASE = "~/Research/Gunrock/essentials/"
+
 # Setup Paths for binary and datasets
-BIN = "~/Research/Gunrock/essentials/build_release/bin/tiled_spmv"
+BIN = "build_release/bin/tiled_spmv"
 DATASET_BASE = "/media/jwapman/SSD1/"  # Must have a "/" at the end
 
 # assert that DATASET_BASE ends with a "/"
@@ -47,16 +49,17 @@ with open("datasets.txt", "r") as datasets:
 
             # Add the json ouput in PROFILEDIR/dataset_name.json
             benchmark_cmd += " -j " + PROFILEDIR + "/" + \
-                strip_path(dataset.rstrip()) 
+                strip_path(dataset.rstrip())
 
             if pin:
                 benchmark_cmd += "_pinned"
-                
+
             benchmark_cmd += ".json"
 
             print(benchmark_cmd)
 
-            retval = subprocess.run(benchmark_cmd, shell=True, capture_output=True)
+            retval = subprocess.run(
+                benchmark_cmd, shell=True, capture_output=True)
             # Sleep 0.5 sec
             time.sleep(0.5)
 
