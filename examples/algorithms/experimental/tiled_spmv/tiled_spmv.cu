@@ -176,6 +176,8 @@ void test_spmv(int num_arguments, char** argument_array) {
        cxxopts::value<bool>()->default_value("false"))  // Tiled
       ("p,pin", "Use Ampere L2 cache pinning",
        cxxopts::value<bool>()->default_value("false"))  // Ampere L2
+      ("i,iter", "Number of iterations",
+       cxxopts::value<int>()->default_value("1"))  // Number of iterations
       ("d,device", "Device to run on",
        cxxopts::value<int>()->default_value("0"))  // GPU
       ("v,verbose", "Verbose output",
@@ -308,26 +310,79 @@ void test_spmv(int num_arguments, char** argument_array) {
   double elapsed_gunrock = 0;
   double elapsed_tiled = 0;
 
+  int n = args["iter"].as<int>();
+
   if (args.count("cusparse")) {
-    elapsed_cusparse =
-        test_spmv(CUSPARSE, csr, x_device, y_device, args, results);
+    double elapsed_cusparse_data[n];
+
+    for (int i = 0; i < n; i++) {
+      elapsed_cusparse_data[i] =
+          test_spmv(CUSPARSE, csr, x_device, y_device, args, results);
+    }
+
+    // Take the average
+    for (int i = 0; i < n; i++) {
+      elapsed_cusparse += elapsed_cusparse_data[i];
+    }
+    elapsed_cusparse /= (double)n;
   }
 
   if (args.count("cub")) {
-    elapsed_cub = test_spmv(CUB, csr, x_device, y_device, args, results);
+    double elapsed_cub_data[n];
+
+    for (int i = 0; i < n; i++) {
+      elapsed_cub_data[i] = test_spmv(CUB, csr, x_device, y_device, args, results);
+    }
+
+    // Take the average
+    for (int i = 0; i < n; i++) {
+      elapsed_cub += elapsed_cub_data[i];
+    }
+    elapsed_cub /= (double)n;
   }
 
   if (args.count("mgpu")) {
-    elapsed_mgpu = test_spmv(MGPU, csr, x_device, y_device, args, results);
+    double elapsed_mgpu_data[n];
+
+    for (int i = 0; i < n; i++) {
+      elapsed_mgpu_data[i] = test_spmv(MGPU, csr, x_device, y_device, args, results);
+    }
+
+    // Take the average
+    for (int i = 0; i < n; i++) {
+      elapsed_mgpu += elapsed_mgpu_data[i];
+    }
+    elapsed_mgpu /= (double)n;
   }
 
   if (args.count("gunrock")) {
-    elapsed_gunrock =
-        test_spmv(GUNROCK, csr, x_device, y_device, args, results);
+    double elapsed_gunrock_data[n];
+
+    for (int i = 0; i < n; i++) {
+      elapsed_gunrock_data[i] =
+          test_spmv(GUNROCK, csr, x_device, y_device, args, results);
+    }
+
+    // Take the average
+    for (int i = 0; i < n; i++) {
+      elapsed_gunrock += elapsed_gunrock_data[i];
+    }
+    elapsed_gunrock /= (double)n;
   }
 
   if (args.count("tiled")) {
-    elapsed_tiled = test_spmv(TILED, csr, x_device, y_device, args, results);
+    double elapsed_tiled_data[n];
+
+    for (int i = 0; i < n; i++) {
+      elapsed_tiled_data[i] =
+          test_spmv(TILED, csr, x_device, y_device, args, results);
+    }
+
+    // Take the average
+    for (int i = 0; i < n; i++) {
+      elapsed_tiled += elapsed_tiled_data[i];
+    }
+    elapsed_tiled /= (double)n;
   }
 
   results["runtime"]["cusparse"] = elapsed_cusparse;
