@@ -21,9 +21,6 @@
 // for convenience
 using json = nlohmann::json;
 
-// using namespace experimental;
-// using namespace memory;
-
 enum SPMV_t { MGPU, CUB, CUSPARSE, GUNROCK, TILED };
 enum LB_t {
   THREAD_PER_ROW,
@@ -60,8 +57,6 @@ double test_spmv(SPMV_t spmv_impl,
                  json& _results) {
   // Reset the output vector
   thrust::fill(d_output.begin(), d_output.end(), 0);
-
-  // auto device = pargs["gpu"].template as<int>();
 
   cudaStream_t stream;
   if (pargs.count("pin")) {
@@ -176,6 +171,8 @@ void test_spmv(int num_arguments, char** argument_array) {
        cxxopts::value<bool>()->default_value("false"))  // Tiled
       ("p,pin", "Use Ampere L2 cache pinning",
        cxxopts::value<bool>()->default_value("false"))  // Ampere L2
+      ("f,fraction", "Fraction or multiple of L2 cache to use for input vector (-1 for untiled)",
+       cxxopts::value<double>()->default_value("1.0"))  // Ampere L2 fraction
       ("i,iter", "Number of iterations",
        cxxopts::value<int>()->default_value("1"))  // Number of iterations
       ("d,device", "Device to run on",

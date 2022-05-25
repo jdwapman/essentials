@@ -141,7 +141,7 @@ double spmv_tiled(cudaStream_t stream,
   using nonzero_t = decltype(csr.nonzero_values.data().get()[0]);
 
   /* ========== Setup Device Properties ========== */
-  auto device = 0;
+  int device = pargs["device"].template as<int>();
   cudaDeviceProp deviceProp;
   CHECK_CUDA(cudaGetDeviceProperties(&deviceProp, device));
 
@@ -161,7 +161,7 @@ double spmv_tiled(cudaStream_t stream,
           deviceProp.maxThreadsPerMultiProcessor / target_occupancy);
   shmemPerBlock =
       (deviceProp.sharedMemPerBlockOptin - target_occupancy * 1024) /
-      target_occupancy;
+      target_occupancy;  // Need 1024 bytes reserved for each block
 
   auto bytes_per_row = 2 * sizeof(row_t) + sizeof(nonzero_t);
   auto rows_per_block = (shmemPerBlock / bytes_per_row) - 1;
@@ -215,13 +215,19 @@ double spmv_tiled(cudaStream_t stream,
   if (deviceProp.major >= 8) {
     // Using Ampere
 
-    auto pinned_cache_size =
-        min(int(deviceProp.l2CacheSize), deviceProp.persistingL2CacheMaxSize);
+    double f = pargs["fraction"].template as<double>();
+    double pinned_cache_size =
+        (double)deviceProp.l2CacheSize * (double)fraction;
+
+    // auto pinned_cache_size =
+    //     min(int(deviceProp.l2CacheSize),
+    //     deviceProp.persistingL2CacheMaxSize);
 
     // size is in bytes. Need to convert to elements
     cols_per_block = pinned_cache_size / sizeof(nonzero_t);
 
     printf("Device has cache size of %d bytes\n", (int)pinned_cache_size);
+    printf("Using %d elements per block\n", cols_per_block);
 
   } else {
     // Using Volta or below
