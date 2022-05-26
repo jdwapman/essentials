@@ -5,260 +5,10 @@
 #include <cooperative_groups/memcpy_async.h>
 #include "spmv_utils.cuh"
 #include <tuple>
+#include "hierarchy_tools.cuh"
+#include <cuda/annotated_ptr>
 
 namespace cg = cooperative_groups;
-
-#define TILE_MATRIX 0
-#define TILE_SPATIAL 1
-#define TILE_TEMPORAL 2
-#define TILE_TEMPORAL_BLOCK 3
-
-// Forward declare
-template <typename rowdim_t, typename coldim_t>
-__host__ __device__ __forceinline__ constexpr auto make_layout(rowdim_t rowdim,
-                                                               coldim_t coldim);
-
-template <typename rowdim_t, typename coldim_t, typename parentlayout_t>
-__host__ __device__ __forceinline__ constexpr auto
-make_layout(rowdim_t rowdim, coldim_t coldim, parentlayout_t parentlayout);
-
-template <typename row_t, typename col_t>
-struct Point {
-  row_t row;
-  col_t col;
-  __host__ __device__ __forceinline__ Point(row_t _row, col_t _col)
-      : row(_row), col(_col) {}
-};
-
-// TODO need to rewrite this to be runtime-modifiable (no tuples)
-template <typename row_t, typename col_t, int hierarchy>
-struct TileIdx {
-  row_t row[hierarchy + 1];
-  col_t col[hierarchy + 1];
-
-  __host__ __device__ __forceinline__ TileIdx(row_t _row, col_t _col) {
-    row[0] = _row;
-    col[0] = _col;
-  }
-
-  __host__ __device__ __forceinline__ TileIdx(row_t _row,
-                                              col_t _col,
-                                              row_t* _parent_rows,
-                                              col_t* _parent_cols) {
-    row[hierarchy] = _row;
-    col[hierarchy] = _col;
-    for (int i = hierarchy - 1; i >= 0; i--) {
-      row[i] = _parent_rows[i];
-      col[i] = _parent_cols[i];
-    }
-  }
-
-  __host__ __device__ __forceinline__ constexpr auto getHierarchy() const {
-    return hierarchy;
-  }
-};
-
-template <typename row_t, typename col_t>
-__host__ __device__ __forceinline__ constexpr auto make_tile_index(row_t row,
-                                                                   col_t col) {
-  return TileIdx<row_t, col_t, 0>(row, col);
-}
-
-template <typename row_t, typename col_t, typename parenttile_t>
-__host__ __device__ __forceinline__ constexpr auto
-make_tile_index(row_t row, col_t col, parenttile_t parenttile) {
-  return TileIdx<row_t, col_t, parenttile.getHierarchy() + 1>(
-      row, col, parenttile.row, parenttile.col);
-}
-
-// NOTE: Need to store layout data as a tuple.
-// Format: < <row0, col0>, <row1, col1>, ... >
-
-template <typename tiledim_t>
-class Layout {
- public:
-  __host__ __device__
-      __forceinline__ constexpr Layout(const tiledim_t& _tiledims)
-      : tiledims(_tiledims) {}
-
-  template <typename rowdim_t, typename coldim_t>
-  __host__ __device__ __forceinline__ constexpr auto tile(
-      const rowdim_t rowdim,
-      const coldim_t coldim) {
-    return make_layout(rowdim, coldim, *this);
-  }
-
-  __host__ __device__ __forceinline__ constexpr bool has_parent() const {
-    return std::tuple_size<tiledim_t>::value > 1;
-  }
-
-  __host__ __device__ __forceinline__ constexpr auto get_hierarchy_level()
-      const {
-    return std::tuple_size<tiledim_t>::value - 1;
-  }
-
-  // ===== TILE INFO FUNCTIONS ===== //
-
-  // Get the dimensions of a tile
-  __host__ __device__ __forceinline__ constexpr auto rows_in_tile(
-      const int hierarchy) const {
-    auto tiledim = TupleReturnValue(hierarchy, tiledims);
-    return std::get<0>(tiledim);
-  }
-
-  __host__ __device__ __forceinline__ constexpr auto cols_in_tile(
-      const int hierarchy) const {
-    auto tiledim = TupleReturnValue(hierarchy, tiledims);
-    return std::get<1>(tiledim);
-  }
-
-  template <typename tile_index_t>
-  __host__ __device__ __forceinline__ constexpr auto rows_in_tile(
-      const tile_index_t tile_index) const {
-    return rows_in_tile(tile_index.getHierarchy());
-  }
-
-  template <typename tile_index_t>
-  __host__ __device__ __forceinline__ constexpr auto cols_in_tile(
-      const tile_index_t tile_index) const {
-    return cols_in_tile(tile_index.getHierarchy());
-  }
-
-  // Get the number of child tiles
-  // TODO need to handle the remainders
-  __host__ __device__ __forceinline__ constexpr auto num_child_row_tiles(
-      const int& hierarchy) const {
-    if (hierarchy == get_hierarchy_level()) {
-      return 1;
-    } else {
-      auto num_even_tiles =
-          rows_in_tile(hierarchy) / rows_in_tile(hierarchy + 1);
-
-      if (rows_in_tile(hierarchy) % rows_in_tile(hierarchy + 1) == 0) {
-        return num_even_tiles;
-      } else {
-        return num_even_tiles + 1;
-      }
-    }
-  }
-
-  __host__ __device__ __forceinline__ constexpr auto num_child_col_tiles(
-      const int hierarchy) const {
-    if (hierarchy == get_hierarchy_level()) {
-      return 1;
-    } else {
-      auto num_even_tiles =
-          cols_in_tile(hierarchy) / cols_in_tile(hierarchy + 1);
-
-      if (cols_in_tile(hierarchy) % cols_in_tile(hierarchy + 1) == 0) {
-        return num_even_tiles;
-      } else {
-        return num_even_tiles + 1;
-      }
-    }
-  }
-
-  template <typename tile_index_t>
-  __host__ __device__ __forceinline__ auto num_child_row_tiles(
-      const tile_index_t& tile_index) const {
-    return num_child_row_tiles(tile_index.getHierarchy());
-  }
-
-  template <typename tile_index_t>
-  __host__ __device__ __forceinline__ auto num_child_col_tiles(
-      const tile_index_t& tile_index) const {
-    return num_child_col_tiles(tile_index.getHierarchy());
-  }
-
-  // Get the number of tiles at the level of the given tile
-  __host__ __device__ __forceinline__ constexpr auto num_row_tiles_at_level(
-      const int& hierarchy) const {
-    if (hierarchy == 0) {
-      return 1;
-    }
-
-    return num_child_row_tiles(hierarchy - 1);
-  }
-
-  __host__ __device__ __forceinline__ constexpr auto num_col_tiles_at_level(
-      const int& hierarchy) const {
-    if (hierarchy == 0) {
-      return 1;
-    }
-
-    return num_child_col_tiles(hierarchy - 1);
-  }
-
-  template <typename tile_index_t>
-  __host__ __device__ __forceinline__ constexpr auto num_row_tiles_at_level(
-      const tile_index_t& tile_index) const {
-    return num_row_tiles_at_level(tile_index.getHierarchy());
-  }
-
-  template <typename tile_index_t>
-  __host__ __device__ __forceinline__ constexpr auto num_col_tiles_at_level(
-      const tile_index_t& tile_index) const {
-    return num_col_tiles_at_level(tile_index.getHierarchy());
-  }
-
-  // Not constexpr since the point changes at runtime
-  template <typename point_t, typename tile_index_t, typename hierarchy_t>
-  __host__ __device__ __forceinline__ auto remap_point(
-      point_t point,
-      tile_index_t tile_index,
-      hierarchy_t goal_hierarchy) {
-    if (tile_index.getHierarchy() < goal_hierarchy) {
-      auto new_point = point;
-
-#pragma unroll
-      for (auto h_idx = tile_index.getHierarchy(); h_idx < goal_hierarchy;
-           h_idx++) {
-        new_point.row %= rows_in_tile(h_idx + 1);
-        new_point.col %= cols_in_tile(h_idx + 1);
-      }
-
-      return new_point;
-
-    } else if (tile_index.getHierarchy() > goal_hierarchy) {
-      auto new_point = point;
-      // Going from a small to a big tile
-#pragma unroll
-      for (auto h_idx = tile_index.getHierarchy(); h_idx > goal_hierarchy;
-           h_idx--) {
-        new_point.row += tile_index.row[h_idx] * rows_in_tile(h_idx);
-        new_point.col += tile_index.col[h_idx] * cols_in_tile(h_idx);
-      }
-
-      return new_point;
-    } else {
-      return point;
-    }
-  }
-
-  tiledim_t tiledims;
-};
-
-template <typename rowdim_t, typename coldim_t>
-__host__ __device__ __forceinline__ constexpr auto make_layout(
-    rowdim_t rowdim,
-    coldim_t coldim) {
-  std::tuple<rowdim_t, coldim_t> tiledim{rowdim, coldim};
-  std::tuple<decltype(tiledim)> tiledim_wrapper{tiledim};
-  return Layout<decltype(tiledim_wrapper)>(tiledim_wrapper);
-}
-
-template <typename rowdim_t, typename coldim_t, typename parentlayout_t>
-__host__ __device__ __forceinline__ constexpr auto
-make_layout(rowdim_t rowdim, coldim_t coldim, parentlayout_t parentlayout) {
-  std::tuple<rowdim_t, coldim_t> tiledim{rowdim, coldim};
-  std::tuple<decltype(tiledim)> tiledim_wrapper{tiledim};
-
-  // concatenate parentlayout and tiledim tuples
-  auto tiledim_wrapper_nested =
-      std::tuple_cat(parentlayout.tiledims, tiledim_wrapper);
-
-  return Layout<decltype(tiledim_wrapper_nested)>(tiledim_wrapper_nested);
-}
 
 template <typename graph_t,
           typename vector_t,
@@ -267,7 +17,7 @@ template <typename graph_t,
 class TileIterator {
  public:
   __device__ __forceinline__ TileIterator(const graph_t _graph,
-                                          const vector_t* _input,
+                                           vector_t* _input,
                                           vector_t* _output,
                                           shmem_t* _shmem,
                                           size_t _shmem_size,
@@ -294,8 +44,8 @@ class TileIterator {
         (int*)(&shmem_output[tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK)]);
   }
 
-  template <typename tile_index_t>
-  __device__ __forceinline__ void load_tile(tile_index_t parent_tile_idx) {
+  template <typename tile_index_t, typename RowT>
+  __device__ __forceinline__ void load_tile(tile_index_t parent_tile_idx, RowT row_offsets) {
     // If we're loading the first tile in a batch, the device tile is by
     // default  (0, 0) relative to the parent
     auto device_tile_idx = make_tile_index(0, 0, parent_tile_idx);
@@ -320,10 +70,6 @@ class TileIterator {
     auto size =
         min(rows_in_block, graph.get_number_of_rows() - matrix_coord.row) *
         sizeof(shmem_t);
-
-    // if(threadIdx.x == 0) {
-    //   printf("Block %d loading rows %d through %d\n", (int)blockIdx.x, (int)matrix_coord.row, (int)(matrix_coord.row + min(rows_in_block, graph.get_number_of_rows()))-1);
-    // }
 
     if (matrix_coord.row < graph.get_number_of_rows()) {
       cg::memcpy_async(block_group,                                         //
@@ -506,9 +252,10 @@ class TileIterator {
     }
   }
 
-  template <typename tile_index_t>
+  template <typename tile_index_t, typename RowT, typename ColT, typename ValT, typename InputT, typename OutputT>
   __device__ __forceinline__ void process_tile_warp_per_row_queue(
-      tile_index_t parent_tile_idx) {
+    tile_index_t parent_tile_idx, RowT row_offsets_ptr, ColT col_indices_ptr, ValT values_ptr, InputT input_ptr, OutputT output_ptr) {
+
     // If we're loading the first tile in a batch, the device tile is by
     // default (0, 0) relative to the parent
     auto device_tile_idx = make_tile_index(0, 0, parent_tile_idx);
@@ -562,8 +309,10 @@ class TileIterator {
 
       while (true) {
         // Each thread gets a column. Nice and coalesced
-        auto col = __ldcs(
-            &(this->graph.get_column_indices()[offset + (threadIdx.x % 32)]));
+        // auto col = __ldcs(
+        //     &(this->graph.get_column_indices()[offset + (threadIdx.x % 32)]));
+
+        const auto col = col_indices_ptr[offset + (threadIdx.x % 32)];
 
         // Check if we've crossed a tile boundary...
         if ((int)col >= (int)tile_boundary) {
@@ -578,10 +327,13 @@ class TileIterator {
 
         auto active = cg::coalesced_threads();
 
-        vector_t warp_val =
-            __ldcs(&(this->graph
-                         .get_nonzero_values()[offset + (threadIdx.x % 32)])) *
-            this->input[col];
+        // vector_t warp_val =
+        //     __ldcs(&(this->graph
+        //                  .get_nonzero_values()[offset + (threadIdx.x % 32)])) *
+        //     this->input[col];
+
+        vector_t warp_val = values_ptr[offset + (threadIdx.x % 32)] *
+                            input_ptr[col];
 
         auto warp_reduce_val =
             cg::reduce(active, warp_val, cg::plus<vector_t>());
@@ -608,8 +360,8 @@ class TileIterator {
     }
   }
 
-  template <typename tile_index_t>
-  __device__ __forceinline__ void store_tile(tile_index_t parent_tile_idx) {
+  template <typename tile_index_t, typename OutputT>
+  __device__ __forceinline__ void store_tile(tile_index_t parent_tile_idx, OutputT output_ptr) {
     // Write the outputs to the output vector
     // Unload data from shared memory
 
@@ -639,14 +391,17 @@ class TileIterator {
       // we won't access this again
       // output[matrix_coord.row + row_idx] = this->shmem_output[row_idx];
 
-      __stcs(&(output[matrix_coord.row + row_idx]),
-             this->shmem_output[row_idx]);
+      output_ptr[matrix_coord.row + row_idx] = this->shmem_output[row_idx];
+
+      // __stcs(&(output[matrix_coord.row + row_idx]),
+      //        this->shmem_output[row_idx]);
     }
   }
 
-  template <typename tile_index_t>
+  template <typename tile_index_t, typename RowT, typename ColT, typename ValT, typename InputT, typename OutputT>
   __device__ __forceinline__ void process_all_tiles_at_hierarchy(
-      tile_index_t parent_tile_idx) {
+    tile_index_t parent_tile_idx, RowT row_offsets_ptr, ColT col_indices_ptr,
+    ValT values_ptr, InputT input_ptr, OutputT output_ptr) {
     // print_device("Processing tile (%d, %d) at %d\n",
     //              (int)parent_tile_idx.row[parent_tile_idx.getHierarchy()],
     //              (int)parent_tile_idx.col[parent_tile_idx.getHierarchy()],
@@ -654,7 +409,7 @@ class TileIterator {
 
     // ===== SETUP TASKS ===== //
     if constexpr (parent_tile_idx.getHierarchy() == TILE_SPATIAL) {
-      load_tile(parent_tile_idx);
+      load_tile(parent_tile_idx, row_offsets_ptr);
     }
 
     // ===== TILE PROCESSING TASKS ===== //
@@ -663,7 +418,9 @@ class TileIterator {
       // and diving into parallel work
       // process_tile_thread_per_row(parent_tile_idx);
       // process_tile_warp_per_row(parent_tile_idx);
-      process_tile_warp_per_row_queue(parent_tile_idx);
+      process_tile_warp_per_row_queue(parent_tile_idx, row_offsets_ptr,
+        col_indices_ptr, values_ptr, input_ptr,
+        output_ptr);
 
       // Get the current grid and sync
       auto grid = cg::this_grid();
@@ -685,14 +442,15 @@ class TileIterator {
              child_tile_idx.col[h_idx] <
              tile_layout.num_child_col_tiles(parent_tile_idx);
              child_tile_idx.col[h_idx]++) {
-          process_all_tiles_at_hierarchy(child_tile_idx);
+          process_all_tiles_at_hierarchy(child_tile_idx, row_offsets_ptr,
+            col_indices_ptr, values_ptr, input_ptr, output_ptr);
         }
       }
     }
 
     // ===== TEARDOWN TASKS ===== //
     if constexpr (parent_tile_idx.getHierarchy() == TILE_SPATIAL) {
-      store_tile(parent_tile_idx);
+      store_tile(parent_tile_idx, output_ptr);
     }
   }
 
@@ -700,12 +458,19 @@ class TileIterator {
   __device__ __forceinline__ void process_all_tiles() {
     auto matrix_tile_index = make_tile_index(0, 0);
 
-    process_all_tiles_at_hierarchy(matrix_tile_index);
+    // Set up the annotated pointers
+     cuda::annotated_ptr< int, cuda::access_property::streaming> row_offsets_ptr(this->graph.get_row_offsets());
+     cuda::annotated_ptr< int, cuda::access_property::streaming> column_indices_ptr(this->graph.get_column_indices());
+     cuda::annotated_ptr< float, cuda::access_property::streaming> nonzero_values_ptr(this->graph.get_nonzero_values());
+    cuda::annotated_ptr<float, cuda::access_property::streaming> output_ptr(this->output);
+    cuda::annotated_ptr< float, cuda::access_property::persisting> input_ptr(this->input);
+
+    process_all_tiles_at_hierarchy(matrix_tile_index, row_offsets_ptr, column_indices_ptr, nonzero_values_ptr, input_ptr, output_ptr);
   }
 
  public:
   const graph_t graph;
-  const vector_t* input;
+   vector_t* input;
   vector_t* output;
   shmem_t* shmem;
   size_t shmem_size;
