@@ -49,7 +49,7 @@ __global__ void __launch_bounds__(1024, 3)
   // Use the actual row tile size
   auto temporal_layout = spatial_layout.tile(
       min(tile_row_size * gridDim.x, graph.get_number_of_rows()),
-      graph.get_number_of_columns());
+      min(graph.get_number_of_columns(), tile_col_size));
 
   // BUT if the entire matrix will fit in one block, we want to redistribute
   // the rows among other blocks
@@ -61,7 +61,7 @@ __global__ void __launch_bounds__(1024, 3)
 
   auto block_temporal_layout =
       temporal_layout.tile(min(tile_row_size, graph.get_number_of_rows()),
-                           graph.get_number_of_columns());
+          min(graph.get_number_of_columns(), tile_col_size));
 
   dims->matrix_tile_rows = matrix_layout.rows_in_tile(0);
   dims->matrix_tile_cols = matrix_layout.cols_in_tile(0);
@@ -176,10 +176,6 @@ double spmv_tiled(cudaStream_t stream,
                                   cudaFuncAttributeMaxDynamicSharedMemorySize,
                                   deviceProp.sharedMemPerBlockOptin));
 
-  //   int carveout = 100;
-  //   CHECK_CUDA(cudaFuncSetAttribute(
-  //       spmv_tiled_kernel<decltype(G), float>,
-  //       cudaFuncAttributePreferredSharedMemoryCarveout, carveout));
 
   // Need to know the max occupancy to determine how many blocks to launch
   // for the cooperative kernel. All blocks must be resident on SMs
@@ -227,6 +223,11 @@ double spmv_tiled(cudaStream_t stream,
 
     // size is in bytes. Need to convert to elements
     cols_per_block = pinned_cache_size / sizeof(nonzero_t);
+
+    if(fraction == -1)
+    {
+        cols_per_block = G.get_number_of_columns();
+    }
 
     printf("Device has cache size of %d bytes\n", (int)pinned_cache_size);
     printf("Using %d elements per block\n", cols_per_block);
