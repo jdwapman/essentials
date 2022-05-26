@@ -215,7 +215,7 @@ double spmv_tiled(cudaStream_t stream,
   if (deviceProp.major >= 8) {
     // Using Ampere
 
-    double f = pargs["fraction"].template as<double>();
+    double fraction = pargs["fraction"].template as<double>();
     double pinned_cache_size =
         (double)deviceProp.l2CacheSize * (double)fraction;
 
