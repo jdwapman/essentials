@@ -51,7 +51,7 @@ sns.set_theme()
 data = df3
 
 # Get columns 0, 4, 5, and 6 of the "data" DataFrame as a new dataframe
-new_df = data[['nonzeros', 'cusparse', 'cub', 'tiled', 'mgpu', 'gunrock']]
+new_df = data[['nonzeros', 'cusparse', 'cub', 'tiled']]
 
 # Melt the dataframe to make it easier to plot
 dfm = new_df.melt('nonzeros', var_name='method', value_name='time')
