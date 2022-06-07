@@ -160,18 +160,18 @@ class TileIterator {
       auto offset = this->shmem_row_offsets_start[row_idx];
 
       while (true) {
-        auto col = __ldcs(&(this->graph.get_column_indices()[offset]));
-
-        printf("Thread %d accessing address %p\n", threadIdx.x,
-               &(this->graph.get_column_indices()[offset]));
-
-        // Check if we've crossed a tile boundary...
-        if ((int)col >= (int)tile_boundary) {
+        // Check if we've reached the end of the row
+        if ((int)offset >= this->shmem_row_offsets_end[row_idx]) {
           break;
         }
 
-        // ... OR reached the end of the row
-        if ((int)offset >= this->shmem_row_offsets_end[row_idx]) {
+        auto col = __ldcs(&(this->graph.get_column_indices()[offset]));
+
+        printf("Thread %d accessing address %p offset %d\n", threadIdx.x,
+               &(this->graph.get_column_indices()[offset]), offset);
+
+        // Check if we've crossed a tile boundary
+        if ((int)col >= (int)tile_boundary) {
           break;
         }
 
@@ -244,18 +244,18 @@ class TileIterator {
       // Want to get performance parity for dense datasets
 
       while (true) {
+        // Check if we've reached the end of the row
+        if ((int)(offset + threadIdx.x % 32) >=
+            this->shmem_row_offsets_end[row_idx]) {
+          break;
+        }
+
         // Each thread gets a column. Nice and coalesced
         auto col = __ldcs(
             &(this->graph.get_column_indices()[offset + (threadIdx.x % 32)]));
 
-        // Check if we've crossed a tile boundary...
+        // Check if we've crossed a tile boundary
         if ((int)col >= (int)tile_boundary) {
-          break;
-        }
-
-        // ... OR reached the end of the row
-        if ((int)(offset + threadIdx.x % 32) >=
-            this->shmem_row_offsets_end[row_idx]) {
           break;
         }
 
@@ -353,16 +353,16 @@ class TileIterator {
         //     &(this->graph.get_column_indices()[offset + (threadIdx.x %
         //     32)]));
 
-        const auto col = col_indices_ptr[offset + (threadIdx.x % 32)];
-
-        // Check if we've crossed a tile boundary...
-        if ((int)col >= (int)tile_boundary) {
+        // Check if we've reached the end of the row
+        if ((int)(offset + threadIdx.x % 32) >=
+            this->shmem_row_offsets_end[row_idx]) {
           break;
         }
 
-        // ... OR reached the end of the row
-        if ((int)(offset + threadIdx.x % 32) >=
-            this->shmem_row_offsets_end[row_idx]) {
+        const auto col = col_indices_ptr[offset + (threadIdx.x % 32)];
+
+        // Check if we've crossed a tile boundary
+        if ((int)col >= (int)tile_boundary) {
           break;
         }
 
@@ -375,9 +375,6 @@ class TileIterator {
         //     this->input[col];
 
         auto addr = offset + (threadIdx.x % 32);
-
-        printf("Thread %d Loading Address %d for row %d\n", threadIdx.x, addr,
-               row_idx);
 
         vector_t warp_val = values_ptr[addr] * input_ptr[col];
 
@@ -472,15 +469,15 @@ class TileIterator {
     if constexpr (parent_tile_idx.getHierarchy() == TILE_TEMPORAL) {
       // We aren't iterating over the tile anymore, we're now processing it
       // and diving into parallel work
-      process_tile_thread_per_row(parent_tile_idx, row_offsets_ptr,
-                                  col_indices_ptr, values_ptr, input_ptr,
-                                  output_ptr);
+      // process_tile_thread_per_row(parent_tile_idx, row_offsets_ptr,
+      //                             col_indices_ptr, values_ptr, input_ptr,
+      //                             output_ptr);
       // process_tile_warp_per_row(parent_tile_idx, row_offsets_ptr,
       //                                 col_indices_ptr, values_ptr, input_ptr,
       //                                 output_ptr);
-      // process_tile_warp_per_row_queue(parent_tile_idx, row_offsets_ptr,
-      //                                 col_indices_ptr, values_ptr, input_ptr,
-      //                                 output_ptr);
+      process_tile_warp_per_row_queue(parent_tile_idx, row_offsets_ptr,
+                                      col_indices_ptr, values_ptr, input_ptr,
+                                      output_ptr);
 
       // Get the current grid and sync
       auto grid = cg::this_grid();
