@@ -17,7 +17,7 @@ template <typename graph_t,
 class TileIterator {
  public:
   __device__ __forceinline__ TileIterator(const graph_t _graph,
-                                           vector_t* _input,
+                                          vector_t* _input,
                                           vector_t* _output,
                                           shmem_t* _shmem,
                                           size_t _shmem_size,
@@ -40,12 +40,20 @@ class TileIterator {
     shmem_output = (vector_t*)(&shmem_row_offsets_end[tile_layout.rows_in_tile(
         TILE_TEMPORAL_BLOCK)]);
 
+    // Check if shared memory is aligned to 4, 8, 16, 32, 64, or 128 bytes
+    if (blockIdx.x == 0 && threadIdx.x == 0) {
+      // Print the addresses of start and end
+      printf("Shared memory start: %p\n", shmem_row_offsets_start);
+      printf("Shared memory end: %p\n", shmem_row_offsets_end);
+    }
+
     row_queue =
         (int*)(&shmem_output[tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK)]);
   }
 
   template <typename tile_index_t, typename RowT>
-  __device__ __forceinline__ void load_tile(tile_index_t parent_tile_idx, RowT row_offsets) {
+  __device__ __forceinline__ void load_tile(tile_index_t parent_tile_idx,
+                                            RowT row_offsets) {
     // If we're loading the first tile in a batch, the device tile is by
     // default  (0, 0) relative to the parent
     auto device_tile_idx = make_tile_index(0, 0, parent_tile_idx);
@@ -98,12 +106,22 @@ class TileIterator {
     __syncthreads();
   }
 
-  template <typename tile_index_t>
+  template <typename tile_index_t,
+            typename RowT,
+            typename ColT,
+            typename ValT,
+            typename InputT,
+            typename OutputT>
   __device__ __forceinline__ void process_tile_thread_per_row(
-      tile_index_t parent_tile_idx) {
-    // if (threadIdx.x == 0 && blockIdx.x == 0) {
-    //   printf("Processing tile\n");
-    // }
+      tile_index_t parent_tile_idx,
+      RowT row_offsets_ptr,
+      ColT col_indices_ptr,
+      ValT values_ptr,
+      InputT input_ptr,
+      OutputT output_ptr) {
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+      printf("Processing tile\n");
+    }
 
     // If we're loading the first tile in a batch, the device tile is by
     // default  (0, 0) relative to the parent
@@ -144,6 +162,9 @@ class TileIterator {
       while (true) {
         auto col = __ldcs(&(this->graph.get_column_indices()[offset]));
 
+        printf("Thread %d accessing address %p\n", threadIdx.x,
+               &(this->graph.get_column_indices()[offset]));
+
         // Check if we've crossed a tile boundary...
         if ((int)col >= (int)tile_boundary) {
           break;
@@ -166,9 +187,19 @@ class TileIterator {
     }
   }
 
-  template <typename tile_index_t>
+  template <typename tile_index_t,
+            typename RowT,
+            typename ColT,
+            typename ValT,
+            typename InputT,
+            typename OutputT>
   __device__ __forceinline__ void process_tile_warp_per_row(
-      tile_index_t parent_tile_idx) {
+      tile_index_t parent_tile_idx,
+      RowT row_offsets_ptr,
+      ColT col_indices_ptr,
+      ValT values_ptr,
+      InputT input_ptr,
+      OutputT output_ptr) {
     // If we're loading the first tile in a batch, the device tile is by
     // default (0, 0) relative to the parent
     auto device_tile_idx = make_tile_index(0, 0, parent_tile_idx);
@@ -252,10 +283,19 @@ class TileIterator {
     }
   }
 
-  template <typename tile_index_t, typename RowT, typename ColT, typename ValT, typename InputT, typename OutputT>
+  template <typename tile_index_t,
+            typename RowT,
+            typename ColT,
+            typename ValT,
+            typename InputT,
+            typename OutputT>
   __device__ __forceinline__ void process_tile_warp_per_row_queue(
-    tile_index_t parent_tile_idx, RowT row_offsets_ptr, ColT col_indices_ptr, ValT values_ptr, InputT input_ptr, OutputT output_ptr) {
-
+      tile_index_t parent_tile_idx,
+      RowT row_offsets_ptr,
+      ColT col_indices_ptr,
+      ValT values_ptr,
+      InputT input_ptr,
+      OutputT output_ptr) {
     // If we're loading the first tile in a batch, the device tile is by
     // default (0, 0) relative to the parent
     auto device_tile_idx = make_tile_index(0, 0, parent_tile_idx);
@@ -310,7 +350,8 @@ class TileIterator {
       while (true) {
         // Each thread gets a column. Nice and coalesced
         // auto col = __ldcs(
-        //     &(this->graph.get_column_indices()[offset + (threadIdx.x % 32)]));
+        //     &(this->graph.get_column_indices()[offset + (threadIdx.x %
+        //     32)]));
 
         const auto col = col_indices_ptr[offset + (threadIdx.x % 32)];
 
@@ -329,11 +370,16 @@ class TileIterator {
 
         // vector_t warp_val =
         //     __ldcs(&(this->graph
-        //                  .get_nonzero_values()[offset + (threadIdx.x % 32)])) *
+        //                  .get_nonzero_values()[offset + (threadIdx.x % 32)]))
+        //                  *
         //     this->input[col];
 
-        vector_t warp_val = values_ptr[offset + (threadIdx.x % 32)] *
-                            input_ptr[col];
+        auto addr = offset + (threadIdx.x % 32);
+
+        printf("Thread %d Loading Address %d for row %d\n", threadIdx.x, addr,
+               row_idx);
+
+        vector_t warp_val = values_ptr[addr] * input_ptr[col];
 
         auto warp_reduce_val =
             cg::reduce(active, warp_val, cg::plus<vector_t>());
@@ -361,7 +407,8 @@ class TileIterator {
   }
 
   template <typename tile_index_t, typename OutputT>
-  __device__ __forceinline__ void store_tile(tile_index_t parent_tile_idx, OutputT output_ptr) {
+  __device__ __forceinline__ void store_tile(tile_index_t parent_tile_idx,
+                                             OutputT output_ptr) {
     // Write the outputs to the output vector
     // Unload data from shared memory
 
@@ -398,10 +445,19 @@ class TileIterator {
     }
   }
 
-  template <typename tile_index_t, typename RowT, typename ColT, typename ValT, typename InputT, typename OutputT>
+  template <typename tile_index_t,
+            typename RowT,
+            typename ColT,
+            typename ValT,
+            typename InputT,
+            typename OutputT>
   __device__ __forceinline__ void process_all_tiles_at_hierarchy(
-    tile_index_t parent_tile_idx, RowT row_offsets_ptr, ColT col_indices_ptr,
-    ValT values_ptr, InputT input_ptr, OutputT output_ptr) {
+      tile_index_t parent_tile_idx,
+      RowT row_offsets_ptr,
+      ColT col_indices_ptr,
+      ValT values_ptr,
+      InputT input_ptr,
+      OutputT output_ptr) {
     // print_device("Processing tile (%d, %d) at %d\n",
     //              (int)parent_tile_idx.row[parent_tile_idx.getHierarchy()],
     //              (int)parent_tile_idx.col[parent_tile_idx.getHierarchy()],
@@ -416,11 +472,15 @@ class TileIterator {
     if constexpr (parent_tile_idx.getHierarchy() == TILE_TEMPORAL) {
       // We aren't iterating over the tile anymore, we're now processing it
       // and diving into parallel work
-      // process_tile_thread_per_row(parent_tile_idx);
-      // process_tile_warp_per_row(parent_tile_idx);
-      process_tile_warp_per_row_queue(parent_tile_idx, row_offsets_ptr,
-        col_indices_ptr, values_ptr, input_ptr,
-        output_ptr);
+      process_tile_thread_per_row(parent_tile_idx, row_offsets_ptr,
+                                  col_indices_ptr, values_ptr, input_ptr,
+                                  output_ptr);
+      // process_tile_warp_per_row(parent_tile_idx, row_offsets_ptr,
+      //                                 col_indices_ptr, values_ptr, input_ptr,
+      //                                 output_ptr);
+      // process_tile_warp_per_row_queue(parent_tile_idx, row_offsets_ptr,
+      //                                 col_indices_ptr, values_ptr, input_ptr,
+      //                                 output_ptr);
 
       // Get the current grid and sync
       auto grid = cg::this_grid();
@@ -443,7 +503,8 @@ class TileIterator {
              tile_layout.num_child_col_tiles(parent_tile_idx);
              child_tile_idx.col[h_idx]++) {
           process_all_tiles_at_hierarchy(child_tile_idx, row_offsets_ptr,
-            col_indices_ptr, values_ptr, input_ptr, output_ptr);
+                                         col_indices_ptr, values_ptr, input_ptr,
+                                         output_ptr);
         }
       }
     }
@@ -455,22 +516,47 @@ class TileIterator {
   }
 
   // Iterate all tiles within level of the hierarchy (h0 is the Matrix)
-  __device__ __forceinline__ void process_all_tiles() {
+  __device__ __forceinline__ void process_all_tiles(bool pin) {
     auto matrix_tile_index = make_tile_index(0, 0);
 
-    // Set up the annotated pointers
-     cuda::annotated_ptr< int, cuda::access_property::streaming> row_offsets_ptr(this->graph.get_row_offsets());
-     cuda::annotated_ptr< int, cuda::access_property::streaming> column_indices_ptr(this->graph.get_column_indices());
-     cuda::annotated_ptr< float, cuda::access_property::streaming> nonzero_values_ptr(this->graph.get_nonzero_values());
-    cuda::annotated_ptr<float, cuda::access_property::streaming> output_ptr(this->output);
-    cuda::annotated_ptr< float, cuda::access_property::persisting> input_ptr(this->input);
+    if (pin) {
+      // Set up the annotated pointers
+      cuda::annotated_ptr<int, cuda::access_property::streaming>
+          row_offsets_ptr(this->graph.get_row_offsets());
+      cuda::annotated_ptr<int, cuda::access_property::streaming>
+          column_indices_ptr(this->graph.get_column_indices());
+      cuda::annotated_ptr<float, cuda::access_property::streaming>
+          nonzero_values_ptr(this->graph.get_nonzero_values());
+      cuda::annotated_ptr<float, cuda::access_property::streaming> output_ptr(
+          this->output);
+      cuda::annotated_ptr<float, cuda::access_property::persisting> input_ptr(
+          this->input);
 
-    process_all_tiles_at_hierarchy(matrix_tile_index, row_offsets_ptr, column_indices_ptr, nonzero_values_ptr, input_ptr, output_ptr);
+      process_all_tiles_at_hierarchy(matrix_tile_index, row_offsets_ptr,
+                                     column_indices_ptr, nonzero_values_ptr,
+                                     input_ptr, output_ptr);
+    } else {
+      // Set up the annotated pointers
+      cuda::annotated_ptr<int, cuda::access_property::normal> row_offsets_ptr(
+          this->graph.get_row_offsets());
+      cuda::annotated_ptr<int, cuda::access_property::normal>
+          column_indices_ptr(this->graph.get_column_indices());
+      cuda::annotated_ptr<float, cuda::access_property::normal>
+          nonzero_values_ptr(this->graph.get_nonzero_values());
+      cuda::annotated_ptr<float, cuda::access_property::normal> output_ptr(
+          this->output);
+      cuda::annotated_ptr<float, cuda::access_property::normal> input_ptr(
+          this->input);
+
+      process_all_tiles_at_hierarchy(matrix_tile_index, row_offsets_ptr,
+                                     column_indices_ptr, nonzero_values_ptr,
+                                     input_ptr, output_ptr);
+    }
   }
 
  public:
   const graph_t graph;
-   vector_t* input;
+  vector_t* input;
   vector_t* output;
   shmem_t* shmem;
   size_t shmem_size;

@@ -25,14 +25,15 @@ struct tiledims {
 // The parent class for all tiled iteration
 
 template <typename graph_t, typename vector_t>
-__global__ void __launch_bounds__(1024, 3)
+__global__ void __launch_bounds__(1024, 2)
     spmv_tiled_kernel(graph_t graph,
                       vector_t* input,
                       vector_t* output,
                       tiledims* dims,  // Used to extract for reporting
                       int tile_row_size,
                       int tile_col_size,
-                      size_t shmem_size) {
+                      size_t shmem_size,
+                      bool pin) {
   // Store the output in shared memory
   using row_t = typename graph_t::vertex_type;
   extern __shared__ row_t shmem[];
@@ -61,7 +62,7 @@ __global__ void __launch_bounds__(1024, 3)
 
   auto block_temporal_layout =
       temporal_layout.tile(min(tile_row_size, graph.get_number_of_rows()),
-          min(graph.get_number_of_columns(), tile_col_size));
+                           min(graph.get_number_of_columns(), tile_col_size));
 
   dims->matrix_tile_rows = matrix_layout.rows_in_tile(0);
   dims->matrix_tile_cols = matrix_layout.cols_in_tile(0);
@@ -99,20 +100,20 @@ __global__ void __launch_bounds__(1024, 3)
       matrix_tile_iterator(graph, input, output, shmem, shmem_size,
                            block_temporal_layout);
 
-  matrix_tile_iterator.process_all_tiles();
+  matrix_tile_iterator.process_all_tiles(pin);
 
   // Simple, single-threaded implementation
-  // if (blockIdx.x == 0 && threadIdx.x == 0) {
-  //   for (auto i = 0; i < graph.get_number_of_rows(); i++) {
-  //     vector_t y = 0;
-  //     for (auto k = graph.get_row_offsets()[i];
-  //          k < graph.get_row_offsets()[i + 1]; k++) {
-  //       y = y + (graph.get_nonzero_values()[k] *
-  //                input[graph.get_column_indices()[k]]);
+  //   if (blockIdx.x == 0 && threadIdx.x == 0) {
+  //     for (auto i = 0; i < graph.get_number_of_rows(); i++) {
+  //       vector_t y = 0;
+  //       for (auto k = graph.get_row_offsets()[i];
+  //            k < graph.get_row_offsets()[i + 1]; k++) {
+  //         y = y + (graph.get_nonzero_values()[k] *
+  //                  input[graph.get_column_indices()[k]]);
+  //       }
+  //       output[i] = y;
   //     }
-  //     output[i] = y;
   //   }
-  // }
 }
 
 template <typename csr_t, typename vector_t, typename args_t>
@@ -156,16 +157,17 @@ double spmv_tiled(cudaStream_t stream,
 
   _results["tiled_spmv"]["target_occupancy"] = target_occupancy;
 
-//   numThreadsPerBlock =
-//       min(deviceProp.maxThreadsPerBlock,
-//           deviceProp.maxThreadsPerMultiProcessor / target_occupancy);
-    numThreadsPerBlock = 1024;
-    shmemPerBlock =
-        (deviceProp.sharedMemPerBlockOptin - target_occupancy * 1024) /
-        target_occupancy;  // Need 1024 bytes reserved for each block
-
+  //   numThreadsPerBlock =
+  //       min(deviceProp.maxThreadsPerBlock,
+  //           deviceProp.maxThreadsPerMultiProcessor / target_occupancy);
+  numThreadsPerBlock = 1024;
+  shmemPerBlock =
+      (deviceProp.sharedMemPerBlockOptin - target_occupancy * 1024) /
+      target_occupancy;  // Need 1024 bytes reserved for each block
 
   auto bytes_per_row = 2 * sizeof(row_t) + sizeof(nonzero_t);
+
+  // -1 because we need some shmem for the queue update
   auto rows_per_block = (shmemPerBlock / bytes_per_row) - 1;
 
   std::cout << "Threads Per Block: " << numThreadsPerBlock << std::endl;
@@ -175,7 +177,6 @@ double spmv_tiled(cudaStream_t stream,
   CHECK_CUDA(cudaFuncSetAttribute(spmv_tiled_kernel<decltype(G), float>,
                                   cudaFuncAttributeMaxDynamicSharedMemorySize,
                                   deviceProp.sharedMemPerBlockOptin));
-
 
   // Need to know the max occupancy to determine how many blocks to launch
   // for the cooperative kernel. All blocks must be resident on SMs
@@ -199,8 +200,10 @@ double spmv_tiled(cudaStream_t stream,
 
   assert(numBlocksPerSm == target_occupancy);
 
-  dim3 dimBlock(numThreadsPerBlock, 1, 1);
-  dim3 dimGrid(deviceProp.multiProcessorCount * numBlocksPerSm, 1, 1);
+  //   dim3 dimBlock(numThreadsPerBlock, 1, 1);
+  //   dim3 dimGrid(deviceProp.multiProcessorCount * numBlocksPerSm, 1, 1);
+  dim3 dimGrid(1, 1, 1);
+  dim3 dimBlock(1, 1, 1);
 
   _results["tiled_spmv"]["blocks"] = dimGrid.x;
 
@@ -214,22 +217,21 @@ double spmv_tiled(cudaStream_t stream,
     // Using Ampere
 
     double fraction = pargs["fraction"].template as<double>();
-    double pinned_cache_size =
-        (double)deviceProp.l2CacheSize * (double)fraction;
+    double pinned_cache_size = (double)deviceProp.l2CacheSize;
 
     // auto pinned_cache_size =
     //     min(int(deviceProp.l2CacheSize),
     //     deviceProp.persistingL2CacheMaxSize);
 
     // size is in bytes. Need to convert to elements
-    cols_per_block = pinned_cache_size / sizeof(nonzero_t);
+    cols_per_block =
+        (size_t)(pinned_cache_size * (double)fraction) / sizeof(nonzero_t);
 
-    if(fraction == -1)
-    {
-        cols_per_block = G.get_number_of_columns();
+    if (fraction == -1) {
+      cols_per_block = G.get_number_of_columns();
     }
 
-    printf("Device has cache size of %d bytes\n", (int)pinned_cache_size);
+    printf("Device has cache size of %d bytes\n", deviceProp.l2CacheSize);
     printf("Using %d elements per block\n", cols_per_block);
 
   } else {
@@ -255,13 +257,19 @@ double spmv_tiled(cudaStream_t stream,
   _results["tiled_spmv"]["max_rows_per_block"] = rows_per_block;
   _results["tiled_spmv"]["max_cols_per_block"] = cols_per_block;
 
+  bool pin = pargs["pin"].template as<bool>();
+
+  if (pin)
+    printf("Setting up pinning\n");
+
   void* kernelArgs[] = {&G,
                         &input_ptr,
                         &output_ptr,
                         &tiledims_ptr,
                         &rows_per_block,
                         &cols_per_block,
-                        &shmemPerBlock};
+                        &shmemPerBlock,
+                        &pin};
 
   printf("Tile Size (elements): %d * %d, %d\n", (int)rows_per_block,
          (int)dimGrid.x, (int)cols_per_block);
