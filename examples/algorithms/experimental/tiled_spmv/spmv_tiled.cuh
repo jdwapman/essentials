@@ -200,10 +200,8 @@ double spmv_tiled(cudaStream_t stream,
 
   assert(numBlocksPerSm == target_occupancy);
 
-  //   dim3 dimBlock(numThreadsPerBlock, 1, 1);
-  //   dim3 dimGrid(deviceProp.multiProcessorCount * numBlocksPerSm, 1, 1);
-  dim3 dimGrid(1, 1, 1);
-  dim3 dimBlock(1, 1, 1);
+  dim3 dimBlock(numThreadsPerBlock, 1, 1);
+  dim3 dimGrid(deviceProp.multiProcessorCount * numBlocksPerSm, 1, 1);
 
   _results["tiled_spmv"]["blocks"] = dimGrid.x;
 
@@ -228,6 +226,7 @@ double spmv_tiled(cudaStream_t stream,
         (size_t)(pinned_cache_size * (double)fraction) / sizeof(nonzero_t);
 
     if (fraction == -1) {
+      
       cols_per_block = G.get_number_of_columns();
     }
 
