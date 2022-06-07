@@ -64,14 +64,14 @@ __global__ void __launch_bounds__(1024, 2)
       temporal_layout.tile(min(tile_row_size, graph.get_number_of_rows()),
                            min(graph.get_number_of_columns(), tile_col_size));
 
-  dims->matrix_tile_rows = matrix_layout.rows_in_tile(0);
-  dims->matrix_tile_cols = matrix_layout.cols_in_tile(0);
-  dims->spatial_tile_rows = spatial_layout.rows_in_tile(1);
-  dims->spatial_tile_cols = spatial_layout.cols_in_tile(1);
-  dims->temporal_tile_rows = temporal_layout.rows_in_tile(2);
-  dims->temporal_tile_cols = temporal_layout.cols_in_tile(2);
-  dims->block_tile_rows = block_temporal_layout.rows_in_tile(3);
-  dims->block_tile_cols = block_temporal_layout.cols_in_tile(3);
+    dims->matrix_tile_rows = matrix_layout.rows_in_tile(0);
+    dims->matrix_tile_cols = matrix_layout.cols_in_tile(0);
+    dims->spatial_tile_rows = spatial_layout.rows_in_tile(1);
+    dims->spatial_tile_cols = spatial_layout.cols_in_tile(1);
+    dims->temporal_tile_rows = temporal_layout.rows_in_tile(2);
+    dims->temporal_tile_cols = temporal_layout.cols_in_tile(2);
+    dims->block_tile_rows = block_temporal_layout.rows_in_tile(3);
+    dims->block_tile_cols = block_temporal_layout.cols_in_tile(3);
 
   //   if (threadIdx.x == 0 && blockIdx.x == 0) {
   //     printf("(%d,%d), (%d,%d), (%d,%d), (%d,%d)\n",
@@ -100,7 +100,7 @@ __global__ void __launch_bounds__(1024, 2)
       matrix_tile_iterator(graph, input, output, shmem, shmem_size,
                            block_temporal_layout);
 
-  matrix_tile_iterator.process_all_tiles(pin);
+    matrix_tile_iterator.process_all_tiles(pin);
 
   // Simple, single-threaded implementation
   //   if (blockIdx.x == 0 && threadIdx.x == 0) {
@@ -226,7 +226,7 @@ double spmv_tiled(cudaStream_t stream,
         (size_t)(pinned_cache_size * (double)fraction) / sizeof(nonzero_t);
 
     if (fraction == -1) {
-      
+      printf("Running untiled\n");
       cols_per_block = G.get_number_of_columns();
     }
 

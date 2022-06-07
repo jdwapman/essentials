@@ -41,11 +41,11 @@ class TileIterator {
         TILE_TEMPORAL_BLOCK)]);
 
     // Check if shared memory is aligned to 4, 8, 16, 32, 64, or 128 bytes
-    if (blockIdx.x == 0 && threadIdx.x == 0) {
-      // Print the addresses of start and end
-      printf("Shared memory start: %p\n", shmem_row_offsets_start);
-      printf("Shared memory end: %p\n", shmem_row_offsets_end);
-    }
+    // if (blockIdx.x == 0 && threadIdx.x == 0) {
+    //   // Print the addresses of start and end
+    //   printf("Shared memory start: %p\n", shmem_row_offsets_start);
+    //   printf("Shared memory end: %p\n", shmem_row_offsets_end);
+    // }
 
     row_queue =
         (int*)(&shmem_output[tile_layout.rows_in_tile(TILE_TEMPORAL_BLOCK)]);
@@ -119,9 +119,9 @@ class TileIterator {
       ValT values_ptr,
       InputT input_ptr,
       OutputT output_ptr) {
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-      printf("Processing tile\n");
-    }
+    // if (threadIdx.x == 0 && blockIdx.x == 0) {
+    //   printf("Processing tile\n");
+    // }
 
     // If we're loading the first tile in a batch, the device tile is by
     // default  (0, 0) relative to the parent
@@ -166,9 +166,6 @@ class TileIterator {
         }
 
         auto col = __ldcs(&(this->graph.get_column_indices()[offset]));
-
-        printf("Thread %d accessing address %p offset %d\n", threadIdx.x,
-               &(this->graph.get_column_indices()[offset]), offset);
 
         // Check if we've crossed a tile boundary
         if ((int)col >= (int)tile_boundary) {
@@ -239,9 +236,6 @@ class TileIterator {
               (parent_tile_idx.col[TILE_TEMPORAL] + 1) * cols_in_block);
 
       auto offset = this->shmem_row_offsets_start[row_idx];
-
-      // TODO hardcode this to 10000 for debugging and remove boundary checks.
-      // Want to get performance parity for dense datasets
 
       while (true) {
         // Check if we've reached the end of the row
