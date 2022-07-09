@@ -21,11 +21,13 @@ parser.add_argument('--lower_bound', type=int, nargs='?',
                     default=0, help='lower bound')
 parser.add_argument('--upper_bound', type=int, nargs='?',
                     default=1, help='upper bound')
-parser.add_argument('--data_type', type=str, nargs='?', default='float',
+parser.add_argument('--data_type', type=str, nargs='?', default='float32',
                     help='data type. Options: float, double, float32, float64, int, int32, int64')
 parser.add_argument('--sparse', type=int, help='percent sparsity (0-100)')
 parser.add_argument('--tile_rows', type=int, help='tile rows')
 parser.add_argument('--tile_cols', type=int, help='tile cols')
+parser.add_argument('--alternate', type=bool,
+                    help='Alternating halves of rows are zeros')
 
 args = parser.parse_args()
 
@@ -65,9 +67,25 @@ else:
     print("ERROR: Unsupported data type:", args.data_type)
     sys.exit(1)
 
+if args.alternate:
+    # Iterate over the rows of the matrix and set alternating halves to 0.
+    # For example:
+    # 1 1 1 0 0 0
+    # 0 0 0 1 1 1
+    # 1 1 1 0 0 0
+    # 0 0 0 1 1 1
+
+    for i in range(0, args.rows):
+        # If the row is even, set the second half of the row to 0
+        if i % 2 == 0:
+            mat[i, int(args.cols / 2):] = 0
+        # If the row is odd, set the first half of the row to 0
+        else:
+            mat[i, :int(args.cols / 2)] = 0
+
 # Sparsify
 # Iterate over the tiles in the matrix (first assuming that it's an
-# even multiple of the tile size) and set each tile 
+# even multiple of the tile size) and set each tile
 
 sparse_matrix = csr_matrix(mat)
 
