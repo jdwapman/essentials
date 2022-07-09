@@ -43,3 +43,4 @@
 // #include "io/mtxbin.cuh"
 
 #include "../examples/algorithms/experimental/tiled_spmv/tests.cuh"
+#include "algorithms/tc.cuh"
