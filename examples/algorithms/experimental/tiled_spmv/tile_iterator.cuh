@@ -335,6 +335,8 @@ class TileIterator {
 
       vector_t accum = this->shmem_output[row_idx];
 
+      vector_t thread_accum = 0;
+
       auto tile_boundary =
           min(graph.get_number_of_columns(),
               (parent_tile_idx.col[TILE_TEMPORAL] + 1) * cols_in_block);
@@ -372,13 +374,17 @@ class TileIterator {
 
         vector_t warp_val = values_ptr[addr] * input_ptr[col];
 
-        auto warp_reduce_val =
-            cg::reduce(active, warp_val, cg::plus<vector_t>());
-
-        accum += warp_reduce_val;
+        thread_accum += warp_val;
 
         offset += active.size();
       }
+
+      auto active = cg::coalesced_threads();
+
+      auto warp_reduce_val =
+          cg::reduce(active, thread_accum, cg::plus<vector_t>());
+
+      accum += warp_reduce_val;
 
       // Save the offset and values for the next iterations.
       // When using warp-per-row, only one thread needs to do this.
@@ -472,7 +478,7 @@ class TileIterator {
       process_tile_warp_per_row_queue(parent_tile_idx, row_offsets_ptr,
                                       col_indices_ptr, values_ptr, input_ptr,
                                       output_ptr);
-
+      // __syncthreads();
       // Get the current grid and sync
       auto grid = cg::this_grid();
       grid.sync();
