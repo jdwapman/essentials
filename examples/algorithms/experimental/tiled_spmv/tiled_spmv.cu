@@ -1,4 +1,5 @@
 #include <gunrock/algorithms/algorithms.hxx>
+#include <gunrock/io/generate.hxx>
 #include <cuda_runtime_api.h>
 #include <cxxopts.hpp>
 #include <iostream>
@@ -140,7 +141,7 @@ double test_spmv(SPMV_t spmv_impl,
     } else {
       if (pargs.count("verbose"))
         std::cout << "Validation Failed" << std::endl;
-      return -1;
+      return elapsed_time;
     }
   }
 
@@ -155,6 +156,10 @@ void test_spmv(int num_arguments, char** argument_array) {
        cxxopts::value<std::string>())  // CSR
       ("m,market", "Matrix-market format file",
        cxxopts::value<std::string>())  // Market
+      ("rows", "Number of rows for dense",
+       cxxopts::value<int>()->default_value("0"))  // Rows
+      ("cols", "Number of cols for dense",
+       cxxopts::value<int>()->default_value("0"))  // Cols
       ("j,jsonfile", "json output filename. Can also be stdout",
        cxxopts::value<std::string>()->default_value("results.json"))  // JSON
       ("c,cpu", "Run a CPU comparison",
@@ -171,7 +176,9 @@ void test_spmv(int num_arguments, char** argument_array) {
        cxxopts::value<bool>()->default_value("false"))  // Tiled
       ("p,pin", "Use Ampere L2 cache pinning",
        cxxopts::value<bool>()->default_value("false"))  // Ampere L2
-      ("f,fraction", "Fraction or multiple of L2 cache to use for input vector (-1 for untiled)",
+      ("f,fraction",
+       "Fraction or multiple of L2 cache to use for input vector (-1 for "
+       "untiled)",
        cxxopts::value<double>()->default_value("1.0"))  // Ampere L2 fraction
       ("i,iter", "Number of iterations",
        cxxopts::value<int>()->default_value("1"))  // Number of iterations
@@ -209,7 +216,8 @@ void test_spmv(int num_arguments, char** argument_array) {
   // Save the current git commit
 
   if (args.count("help") ||
-      (args.count("market") == 0 && args.count("bin") == 0)) {
+      (args.count("market") == 0 && args.count("bin") == 0 &&
+       args.count("rows") == 0 && args.count("cols") == 0)) {
     std::cout << options.help({""}) << std::endl;
     std::exit(0);
   }
@@ -243,6 +251,15 @@ void test_spmv(int num_arguments, char** argument_array) {
       std::cout << options.help({""}) << std::endl;
       std::exit(1);
     }
+  } else if (args.count("rows") == 1 && args.count("cols") == 1) {
+    filename = "";
+    int rows = args["rows"].as<int>();
+    int cols = args["cols"].as<int>();
+    if (rows > 0 && cols > 0) {
+    } else {
+      std::cout << options.help({""}) << std::endl;
+      std::exit(1);
+    }
   } else {
     std::cout << options.help({""}) << std::endl;
     std::exit(1);
@@ -260,11 +277,14 @@ void test_spmv(int num_arguments, char** argument_array) {
   // IO
 
   csr_t csr;
-  if (util::is_market(filename)) {
+  if (args.count("market") == 1 && util::is_market(filename)) {
     io::matrix_market_t<row_t, edge_t, nonzero_t> mm;
     csr.from_coo(mm.load(filename));
-  } else if (util::is_binary_csr(filename)) {
+  } else if (args.count("bin") == 1 && util ::is_binary_csr(filename)) {
     csr.read_binary(filename);
+  } else if (args.count("rows") == 1 && args.count("cols") == 1) {
+    auto dense_coo = gunrock::io::generate_dense(10, 10);
+    csr.from_coo(dense_coo);
   } else {
     std::cerr << "Unknown file format: " << filename << std::endl;
     exit(1);
@@ -328,7 +348,8 @@ void test_spmv(int num_arguments, char** argument_array) {
     double elapsed_cub_data[n];
 
     for (int i = 0; i < n; i++) {
-      elapsed_cub_data[i] = test_spmv(CUB, csr, x_device, y_device, args, results);
+      elapsed_cub_data[i] =
+          test_spmv(CUB, csr, x_device, y_device, args, results);
     }
 
     // Take the average
@@ -342,7 +363,8 @@ void test_spmv(int num_arguments, char** argument_array) {
     double elapsed_mgpu_data[n];
 
     for (int i = 0; i < n; i++) {
-      elapsed_mgpu_data[i] = test_spmv(MGPU, csr, x_device, y_device, args, results);
+      elapsed_mgpu_data[i] =
+          test_spmv(MGPU, csr, x_device, y_device, args, results);
     }
 
     // Take the average

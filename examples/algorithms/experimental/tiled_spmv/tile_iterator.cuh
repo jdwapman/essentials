@@ -290,6 +290,9 @@ class TileIterator {
       ValT values_ptr,
       InputT input_ptr,
       OutputT output_ptr) {
+    // Set up cooperative group
+    auto warp_cg = cg::tiled_partition<32>(cg::this_thread_block());
+
     // If we're loading the first tile in a batch, the device tile is by
     // default (0, 0) relative to the parent
     auto device_tile_idx = make_tile_index(0, 0, parent_tile_idx);
@@ -379,10 +382,8 @@ class TileIterator {
         offset += active.size();
       }
 
-      auto active = cg::coalesced_threads();
-
       auto warp_reduce_val =
-          cg::reduce(active, thread_accum, cg::plus<vector_t>());
+          cg::reduce(warp_cg, thread_accum, cg::plus<vector_t>());
 
       accum += warp_reduce_val;
 
