@@ -10,6 +10,7 @@
 #include "spmv_cub.cuh"
 #include "spmv_moderngpu.cuh"
 #include "spmv_tiled.cuh"
+#include "spmv_queue.cuh"
 #include "spmv_utils.cuh"
 #include "launch_params.cuh"
 #include "log.h"
@@ -22,7 +23,7 @@
 // for convenience
 using json = nlohmann::json;
 
-enum SPMV_t { MGPU, CUB, CUSPARSE, GUNROCK, TILED };
+enum SPMV_t { MGPU, CUB, CUSPARSE, GUNROCK, TILED, QUEUE };
 enum LB_t {
   THREAD_PER_ROW,
   WARP_PER_ROW,
@@ -44,6 +45,8 @@ auto to_string(SPMV_t t) {
       return "gunrock";
     case TILED:
       return "tiled";
+    case QUEUE:
+      return "queue";
     default:
       return "unknown";
   }
@@ -83,6 +86,9 @@ double test_spmv(SPMV_t spmv_impl,
     printf("=== RUNNING TILED SPMV ===\n");
     elapsed_time =
         spmv_tiled(stream, sparse_matrix, d_input, d_output, pargs, _results);
+  } else if (spmv_impl == QUEUE) {
+    printf("=== RUNNING QUEUE SPMV ===\n");
+    elapsed_time = spmv_queue(stream, sparse_matrix, d_input, d_output, pargs);
   } else if (spmv_impl == GUNROCK) {
     printf("=== RUNNING GUNROCK SPMV ===\n");
     auto G = gunrock::graph::build::from_csr<gunrock::memory_space_t::device,
@@ -172,6 +178,8 @@ void test_spmv(int num_arguments, char** argument_array) {
        cxxopts::value<bool>()->default_value("false"))  // cuSparse
       ("gunrock", "Run Gunrock SPMV",
        cxxopts::value<bool>()->default_value("false"))  // Gunrock
+      ("queue", "Run Queue SPMV",
+       cxxopts::value<bool>()->default_value("false"))  // Queue
       ("tiled", "Run Tiled SPMV",
        cxxopts::value<bool>()->default_value("false"))  // Tiled
       ("p,pin", "Use Ampere L2 cache pinning",
@@ -326,6 +334,7 @@ void test_spmv(int num_arguments, char** argument_array) {
   double elapsed_mgpu = 0;
   double elapsed_gunrock = 0;
   double elapsed_tiled = 0;
+  double elapsed_queue = 0;
 
   int n = args["iter"].as<int>();
 
@@ -404,16 +413,32 @@ void test_spmv(int num_arguments, char** argument_array) {
     elapsed_tiled /= (double)n;
   }
 
+  if (args.count("queue")) {
+    double elapsed_queue_data[n];
+
+    for (int i = 0; i < n; i++) {
+      elapsed_queue_data[i] =
+          test_spmv(QUEUE, csr, x_device, y_device, args, results);
+    }
+
+    // Take the average
+    for (int i = 0; i < n; i++) {
+      elapsed_queue += elapsed_queue_data[i];
+    }
+    elapsed_queue /= (double)n;
+  }
+
   results["runtime"]["cusparse"] = elapsed_cusparse;
   results["runtime"]["cub"] = elapsed_cub;
   results["runtime"]["mgpu"] = elapsed_mgpu;
   results["runtime"]["gunrock"] = elapsed_gunrock;
   results["runtime"]["tiled"] = elapsed_tiled;
+  results["runtime"]["queue"] = elapsed_queue;
 
-  printf("%s,%d,%d,%d,%d,%f,%f,%f,%f,%f\n", filename.c_str(),
+  printf("%s,%d,%d,%d,%d,%f,%f,%f,%f,%f,%f\n", filename.c_str(),
          csr.number_of_rows, csr.number_of_columns, csr.number_of_nonzeros,
          args["pin"].as<bool>(), elapsed_cusparse, elapsed_cub, elapsed_mgpu,
-         elapsed_gunrock, elapsed_tiled);
+         elapsed_gunrock, elapsed_tiled, elapsed_queue);
 
   // Log a success
   results["success"] = true;
