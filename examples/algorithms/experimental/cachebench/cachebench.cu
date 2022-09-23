@@ -47,18 +47,19 @@ void cachebench(nvbench::state& state) {
 
   thrust::device_vector<int> d_in(NUM_LINES * AMPERE_L2_CACHE_LINE_SIZE /
                                   sizeof(int));
-  thrust::device_vector<int> d_out(NUM_LINES * AMPERE_L2_CACHE_LINE_SIZE /
-                                   sizeof(int));
+  thrust::device_vector<int> d_out(1);
 
   // Fill the vector with increasing numbers
   thrust::sequence(d_in.begin(), d_in.end());
-  thrust::sequence(d_out.begin(), d_out.end());
 
   CHECK_CUDA(cudaCtxResetPersistingL2Cache());
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     cache_sweep_kernel<<<1, 1, 0>>>(d_in.data().get(), d_out.data().get());
   });
+
+  thrust::host_vector<int> h_out = d_out;
+  printf("Final Value: %d\n", h_out[0]);
 }
 
 int main(int argc, char** argv) {
