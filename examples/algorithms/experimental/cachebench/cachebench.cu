@@ -12,18 +12,52 @@
 #include <thrust/sequence.h>
 #include <nvbench/nvbench.cuh>
 
-// Using integers, this is 32 elements
-#define AMPERE_L2_CACHE_LINE_SIZE 128
-constexpr int NUM_LINES = 1 << 16;
+// Set clock64_t as long long int
+typedef long long int clock64_t;
 
-__global__ void cache_sweep_kernel(int* d_in, int* d_out) {
+template <typename T>
+__device__ __forceinline__ auto cache_read(T ptr, uint32_t addr) {
+  clock64_t start_time;
+  clock64_t end_time;
+  uint32_t data;
+  uint32_t accum = 0;
+
+  // Start the clock
+  asm volatile("mov.u64 %0, %%clock64;" : "=l"(start_time)::"memory");
+
+  data = ptr[addr];
+
+  __threadfence();
+
+  accum += data;
+
+  // Insert an asm volatile instruction that gets the clock64 register
+  // value and stores it in the global variable
+  asm volatile("mov.u64 %0, %%clock64;" : "=l"(end_time)::"memory");
+
+  // Subtract 2 cycles for the add
+  printf("%d,%d,%d,%ld\n", addr, data, accum, end_time - start_time - 2);
+}
+
+#define AMPERE_L2_CACHE_LINE_SIZE 128
+constexpr int NUM_LINES = 1 << 14;
+
+__global__ void cache_sweep_kernel(volatile int* d_in,  int* d_out) {
   int sum = 0;
-  cuda::annotated_ptr<int, cuda::access_property::persisting> d_in_ptr(d_in);
+  // cuda::annotated_ptr<int, cuda::access_property::persisting> d_in_ptr(d_in);
   cuda::annotated_ptr<int, cuda::access_property::streaming> d_out_ptr(d_out);
 
-  for (auto i = 0; i < NUM_LINES * AMPERE_L2_CACHE_LINE_SIZE / sizeof(int);
-       i++) {
-    sum += d_in_ptr[i];
+  // Global thread index
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+  // Global thread stride
+  int stride = blockDim.x * gridDim.x;
+
+  for (auto i = tid; i < NUM_LINES * AMPERE_L2_CACHE_LINE_SIZE / sizeof(int);
+       i += stride) {
+    // printf("d_in_ptr[%d] = %d", i, d_in_ptr[i]);
+    // cache_read(d_in, i);
+    sum += d_in[0];
   }
 
   d_out_ptr[0] = sum;
