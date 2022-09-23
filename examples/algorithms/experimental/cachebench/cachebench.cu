@@ -1,5 +1,3 @@
-
-
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 #include "../tiled_spmv/spmv_utils.cuh"
