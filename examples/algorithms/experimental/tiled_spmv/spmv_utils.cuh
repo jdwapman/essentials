@@ -196,18 +196,18 @@ void print_gpu_stats(json& _results) {
   printf("- Total amount of global memory: %.0f GB\n",
          deviceProp.totalGlobalMem * 1e-9f);
 
-  _results["gpustats"]["total_global_memory"] = deviceProp.totalGlobalMem;
+  _results["gpustats"]["total_global_memory_bytes"] = deviceProp.totalGlobalMem;
 
   // Print the amount of L2 cache
   printf("- L2 cache size: %.0f KB\n", deviceProp.l2CacheSize * 1e-3f);
 
-  _results["gpustats"]["l2_cache_size"] = deviceProp.l2CacheSize;
+  _results["gpustats"]["l2_cache_size_bytes"] = deviceProp.l2CacheSize;
 
   // Print the amount of persisting L2 cache
   printf("- Persisting L2 cache size: %.0f KB\n",
          deviceProp.persistingL2CacheMaxSize * 1e-3f);
 
-  _results["gpustats"]["persisting_l2_cache_size"] =
+  _results["gpustats"]["persisting_l2_cache_size_bytes"] =
       deviceProp.persistingL2CacheMaxSize;
 
   // Print the max policy window size
@@ -216,23 +216,23 @@ void print_gpu_stats(json& _results) {
   printf("  - %d float32s\n", deviceProp.accessPolicyMaxWindowSize / 4);
   printf("  - %d float64s\n", deviceProp.accessPolicyMaxWindowSize / 8);
 
-  _results["gpustats"]["access_policy_max_window_size"] =
+  _results["gpustats"]["access_policy_max_window_size_bytes"] =
       deviceProp.accessPolicyMaxWindowSize;
 
   // Print the amount of shared memory available per block
   printf("- Shared memory available per block (default): %.0f KB\n",
          deviceProp.sharedMemPerBlock * 1e-3f);
 
-  _results["gpustats"]["shared_memory_per_block"] =
+  _results["gpustats"]["shared_memory_per_block_bytes"] =
       deviceProp.sharedMemPerBlock;
 
   printf("- Shared memory available per block (extended): %.0f KB\n",
          deviceProp.sharedMemPerBlockOptin * 1e-3f);
 
-  _results["gpustats"]["shared_memory_per_block_extended"] =
+  _results["gpustats"]["shared_memory_per_block_extended_bytes"] =
       deviceProp.sharedMemPerBlockOptin;
 
-  _results["gpustats"]["shared_memory_per_multiprocessor"] =
+  _results["gpustats"]["shared_memory_per_multiprocessor_bytes"] =
       deviceProp.sharedMemPerMultiprocessor;
 
   // Print the max number of threads per SM and block
