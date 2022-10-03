@@ -10,13 +10,12 @@
 #include <thrust/sequence.h>
 #include <nvbench/nvbench.cuh>
 
-#define AMPERE_L2_CACHE_LINE_SIZE 128
-constexpr int NUM_LINES = 1 << 14;
+#define AMPERE_L2_CACHE_LINE_SIZE 128 // 32 elements
+constexpr int NUM_LINES = 1 << 20;
 
-__global__ void cache_sweep_kernel(volatile int* d_in, int* d_out) {
+// Should be around 94% hit rate. It's actually around 80% no matter the input data size.
+__global__ void cache_sweep_kernel( int* d_in, int* d_out) {
   int sum = 0;
-  // cuda::annotated_ptr<int, cuda::access_property::persisting> d_in_ptr(d_in);
-  cuda::annotated_ptr<int, cuda::access_property::streaming> d_out_ptr(d_out);
 
   // Global thread index
   int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -24,17 +23,19 @@ __global__ void cache_sweep_kernel(volatile int* d_in, int* d_out) {
   // Global thread stride
   int stride = blockDim.x * gridDim.x;
 
+  #pragma unroll
   for (auto i = tid; i < NUM_LINES * AMPERE_L2_CACHE_LINE_SIZE / sizeof(int);
        i += stride) {
-    sum += d_in[0];
+    sum += __ldcg(d_in + i);
   }
 
-  d_out_ptr[0] = sum;
+  d_out[0] = sum;
 }
 
 void cachebench(nvbench::state& state) {
   printf("Running benchmark with %d lines\n", NUM_LINES);
   state.collect_l2_hit_rates();
+  state.collect_l1_hit_rates();
 
   // Get the current CUDA device
   int device;
@@ -53,7 +54,7 @@ void cachebench(nvbench::state& state) {
   CHECK_CUDA(cudaCtxResetPersistingL2Cache());
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    cache_sweep_kernel<<<1, 1, 0>>>(d_in.data().get(), d_out.data().get());
+    cache_sweep_kernel<<<1, 32, 0>>>(d_in.data().get(), d_out.data().get());
   });
 
   thrust::host_vector<int> h_out = d_out;
